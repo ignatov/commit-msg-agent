@@ -1,10 +1,11 @@
-// Builds results/report.html for a product manager from a benchmark run.
+// Builds REPORT.md, results/report.html, and the results block of README.md from benchmark runs.
 //
-//   bun report.ts [results/bench-agents.jsonl]
-import { readFileSync, writeFileSync } from "node:fs"
+//   bun report.ts [results/bench-agents*.jsonl ...]
+import { readdirSync, readFileSync, writeFileSync } from "node:fs"
 
-const input = process.argv[2] ?? "results/bench-agents.jsonl"
-const rows: any[] = readFileSync(input, "utf8").split("\n").filter(Boolean).map(it => JSON.parse(it))
+const inputs = process.argv.length > 2 ? process.argv.slice(2) :
+  readdirSync("results").filter(it => /^bench-agents.*\.jsonl$/.test(it)).map(it => `results/${it}`)
+const rows: any[] = inputs.flatMap(file => readFileSync(file, "utf8").split("\n").filter(Boolean).map(it => JSON.parse(it)))
 
 interface AgentInfo {
   config: string
@@ -75,8 +76,8 @@ const pct = (values: number[], p: number) => values[Math.min(values.length - 1, 
 function stats(config: string) {
   const all = rows.filter(it => it.config === config)
   const ok = all.filter(it => it.ok)
-  // When no run gave a message, the time and the tokens of the runs that reached the model still show the price of the attempt.
-  const good = ok.length ? ok : all.filter(it => it.usage.input > 0)
+  // The time and the tokens count every run that reached the model: a run without a usable message still costs them.
+  const good = all.filter(it => it.ok || it.usage.input > 0)
   const ms = good.map(it => it.wallMs).sort((a, b) => a - b)
   const mean = (pick: (row: any) => number) => (good.length ? good.reduce((sum, row) => sum + pick(row), 0) / good.length : undefined)
   const costs = good.filter(it => it.costUsd !== undefined && it.costUsd !== null)
@@ -120,6 +121,23 @@ const exampleRows = commits.map(task => {
   return `<tr><td>${task.replace(/-\d+$/, "")}<div class="sub">${kb(first.diffChars)} diff</div></td><td class="actual">${esc(first.actual.split("\n")[0])}</td>${cells}</tr>`
 }).join("\n")
 
+const ISSUE_ID = /[A-Z][A-Z0-9]+-\d+/g
+
+/** The ids that the model wrote into the summary line, and how many of them the real message does not have. */
+function issueIds(config: string): { written: number; wrong: number } {
+  let written = 0
+  let wrong = 0
+  for (const row of rows.filter(it => it.config === config && it.ok)) {
+    const real = new Set(row.actual.split("\n")[0].match(ISSUE_ID) ?? [])
+    for (const id of row.droppedIds ?? []) {
+      written++
+      if (!real.has(id)) wrong++
+    }
+  }
+  return { written, wrong }
+}
+
+const allIds = AGENTS.map(it => issueIds(it.config)).reduce((sum, it) => ({ written: sum.written + it.written, wrong: sum.wrong + it.wrong }), { written: 0, wrong: 0 })
 const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Commit message generation: agent comparison</title>
 <style>
@@ -149,8 +167,8 @@ const html = `<!doctype html>
 <div class="cards">
   <div class="card"><b>Use the CLI mode, not ACP</b><code>claude -p</code> and <code>codex exec</code> give the message in 2–3 seconds for less than 2 cents. The IDE collects the diff and gives it to the agent; the agent only writes text.</div>
   <div class="card"><b>Claude Code and Codex are ready</b>All runs succeeded and the output was clean text. Haiku 4.5 is the fastest; Haiku 5.5 writes the best explanations; Luna writes short and exact messages.</div>
-  <div class="card"><b>Junie is not suitable today</b>Its CLI returns a task report instead of the message and makes 6–9 model calls. Its ACP mode needs the IDE for authorization.</div>
-  <div class="card"><b>Do not trust issue ids from the model</b>Models copy an unrelated id from the history or invent one in about half of the cases. The IDE takes the id from the branch name only.</div>
+  <div class="card"><b>Junie is not suitable today</b>Its CLI returns a task report instead of the message and makes several model calls. Its ACP mode needs the IDE for authorization.</div>
+  <div class="card"><b>Do not trust issue ids from the model</b>${allIds.wrong} of the ${allIds.written} ids that the models wrote were wrong. The IDE takes the id from the branch name only.</div>
 </div>
 
 <h2>Agents</h2>
@@ -183,4 +201,103 @@ ${exampleRows}
 </body></html>
 `
 writeFileSync("results/report.html", html)
-console.log("results/report.html")
+
+// The Markdown report renders on GitHub, so the repository page shows the result at once.
+const STATUS = { good: "✅", ok: "🟡", bad: "❌" }
+const cell = (text: string) => text.replace(/\|/g, "\\|").replace(/\n/g, " ")
+const md = (html: string) => html.replace(/<code>(.*?)<\/code>/g, "`$1`").replace(/<[^>]+>/g, "")
+const date = new Date().toISOString().slice(0, 10)
+const scope = `${commits.length} real commits of [openai/codex](https://github.com/openai/codex) and ` +
+  `[JetBrains/intellij-community](https://github.com/JetBrains/intellij-community), diff from ${kb(Math.min(...diffSizes))} to ` +
+  `${kb(Math.max(...diffSizes))}, ${runsPerTask === 1 ? "one run" : `${runsPerTask} runs`} per commit and agent, ${date}.`
+
+function agentTable(): string {
+  const out = ["| | Agent | Mode | Model | Success | Median | p90 | Input tokens | Cost per message | Wrong issue ids |", "|---|---|---|---|---:|---:|---:|---:|---:|---:|"]
+  for (const info of AGENTS) {
+    const s = stats(info.config)
+    const cost = info.config.includes("haiku-5-5") ? "n/a¹" : s.cost === undefined ? "n/a²" : `$${s.cost.toFixed(4)}`
+    out.push(`| ${STATUS[info.verdict]} | **${info.agent}** | ${md(info.how)} | ${info.model} | ${s.ok}/${s.runs} | ` +
+      `${s.measured ? seconds(s.p50) : "–"} | ${s.measured ? seconds(s.p90) : "–"} | ` +
+      `${s.input === undefined ? "–" : `${(s.input / 1000).toFixed(1)}k`} | ${s.measured ? cost : "–"} | ` +
+      `${s.ok ? `${issueIds(info.config).wrong} of ${issueIds(info.config).written}` : "–"} |`)
+  }
+  out.push("", "¹ Claude Code 2.1.291 does not know the price of Haiku 5.5. ² The CLI reports tokens, not a price. " +
+    "Wrong issue ids: the ids that the model wrote into the summary line and the real message does not have. The IDE removes all of them, see the README.")
+  return out.join("\n")
+}
+
+function speedChart(): string {
+  const measured = AGENTS.map(info => ({ info, s: stats(info.config) })).filter(it => it.s.measured)
+  const max = Math.max(...measured.map(it => it.s.p50))
+  const width = Math.max(...measured.map(it => `${it.info.agent} ${it.info.model}`.length))
+  const lines = measured.map(({ info, s }) =>
+    `${`${info.agent} ${info.model}`.padEnd(width)}  ${"█".repeat(Math.max(1, Math.round((s.p50 / max) * 40)))} ${seconds(s.p50)}`)
+  return ["Median time per message, from the process start to the message:", "", "```text", ...lines, "```"].join("\n")
+}
+
+/** Every fifth commit, so that the table stays short. The full list is below it. */
+function examples(configs: AgentInfo[], tasks: string[]): string {
+  const out = [`| Commit | Real message | ${configs.map(it => `${it.agent} ${it.model}`).join(" | ")} |`, `|---|---|${configs.map(() => "---").join("|")}|`]
+  for (const task of tasks) {
+    const first = rows.find(it => it.task === task)
+    const cells = configs.map(info => {
+      const row = rows.find(it => it.task === task && it.config === info.config && it.run === 0)
+      return !row ? "–" : row.ok ? cell(row.final.split("\n")[0]) : "❌ failed"
+    })
+    out.push(`| ${task}<br>${kb(first.diffChars)} | ${cell(first.actual.split("\n")[0])} | ${cells.join(" | ")} |`)
+  }
+  return out.join("\n")
+}
+
+const ready = AGENTS.filter(it => it.verdict === "good")
+const summary = [
+  `> ${scope} Cheap models only.`,
+  "",
+  agentTable(),
+  "",
+  speedChart(),
+].join("\n")
+
+const report = `# Commit message generation: agent comparison
+
+${summary}
+
+## Verdict
+
+- ✅ **Use the CLI mode.** \`claude -p\` and \`codex exec\` return the message in 2–3 s. The IDE collects the diff; the agent only writes text.
+- ✅ **Claude Code and Codex are ready.** Every run returned clean text: no quotes, no fences, no preamble.
+- 🟡 **ACP works, but costs more.** ACP has no system prompt and no switches to cut the context, so every call carries the full agent setup.
+- ❌ **Junie is not suitable today.** Its CLI returns a task report instead of the message. Its ACP mode needs a JetBrains IDE for the login.
+- ⚠️ **Do not trust issue ids from the model.** ${allIds.wrong} of the ${allIds.written} ids that the models wrote were wrong: an id of an unrelated commit, or an invented one. Keep only the ids from the branch name.
+
+## Agents
+
+${AGENTS.map(info => `### ${STATUS[info.verdict]} ${info.agent}: ${info.model}\n\n${info.notes().map(it => `- ${md(it)}`).join("\n")}`).join("\n\n")}
+
+## Examples
+
+The first line of the message. Issue ids are already removed: these commits have no branch name.
+
+${examples(ready, commits.filter((_, index) => index % 5 === 0))}
+
+<details>
+<summary>All ${commits.length} commits, all agents</summary>
+
+${examples(AGENTS, commits)}
+
+</details>
+
+## Versions
+
+Claude Code 2.1.291, codex-cli 0.154.0, codex-acp 2.2.2, claude-agent-acp 0.89.1, Junie 26.10.5, macOS. Raw data: ${inputs.map(it => `[\`${it}\`](${it})`).join(", ")}.
+`
+writeFileSync("REPORT.md", report)
+
+const readme = readFileSync("README.md", "utf8")
+const START = "<!-- results:start -->"
+const END = "<!-- results:end -->"
+if (readme.includes(START)) {
+  const block = `${START}\n${summary}\n\nThe full report with examples: [REPORT.md](REPORT.md).\n${END}`
+  writeFileSync("README.md", readme.slice(0, readme.indexOf(START)) + block + readme.slice(readme.indexOf(END) + END.length))
+}
+console.log("REPORT.md, results/report.html, README.md")

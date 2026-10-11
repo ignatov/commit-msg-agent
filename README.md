@@ -8,30 +8,47 @@ This is a prototype and a benchmark. It answers three questions for an IDE featu
 - How fast and how expensive is a call with a cheap model?
 - Which agents and modes are usable today?
 
-The HTML report for a product audience: [`results/report.html`](results/report.html).
+The full report with examples: [REPORT.md](REPORT.md). The same in HTML for a product audience: [`results/report.html`](results/report.html).
 
 ## Results
 
-8 commits of [openai/codex](https://github.com/openai/codex) and [JetBrains/intellij-community](https://github.com/JetBrains/intellij-community), diff from 0.6 KB to 51 KB, 2 runs each. Claude Code 2.1.291, codex-cli 0.154.0, codex-acp 2.2.2, claude-agent-acp 0.89.1, Junie 26.10.5, macOS, 2026-10-11.
+<!-- results:start -->
+> 60 real commits of [openai/codex](https://github.com/openai/codex) and [JetBrains/intellij-community](https://github.com/JetBrains/intellij-community), diff from 0.4 KB to 102.0 KB, one run per commit and agent, 2026-10-11. Cheap models only.
 
-| Agent | How | Model | Success | Median | p90 | Input tokens | Verdict |
-|---|---|---|---|---|---|---|---|
-| Claude Code | `claude -p` | Haiku 4.5 | 16/16 | 2.8 s | 4.5 s | 5.9k | ready, $0.011 per message |
-| Claude Code | `claude -p` | Haiku 5.5 | 16/16 | 2.3 s | 2.9 s | 7.7k | ready |
-| Codex | `codex exec` | GPT-5.6 Luna | 16/16 | 2.7 s | 3.0 s | 6.7k | ready |
-| Codex ACP | `codex-acp` | GPT-5.6 Luna | 16/16 | 3.3 s | 4.2 s | 21k | works, 3× the tokens |
-| Claude ACP | `claude-agent-acp` | Haiku | 16/16 | 5.7 s | 8.3 s | 27k | works, 2× the time |
-| Junie | `junie --task` | junie-lite | 2/16 | 10.9 s | 10.9 s | 41k, 8 model calls | not suitable |
-| Junie ACP | `junie --acp` | GPT-5.6 Luna | 0/16 | – | – | – | needs an IDE for the login |
+| | Agent | Mode | Model | Success | Median | p90 | Input tokens | Cost per message | Wrong issue ids |
+|---|---|---|---|---:|---:|---:|---:|---:|---:|
+| ✅ | **Claude Code** | `claude -p` | Haiku 4.5 | 60/60 | 2.4 s | 3.8 s | 6.0k | $0.0112 | 2 of 12 |
+| ✅ | **Claude Code** | `claude -p` | Haiku 5.5 | 60/60 | 2.1 s | 3.0 s | 7.8k | n/a¹ | 1 of 4 |
+| ✅ | **Codex** | `codex exec` | GPT-5.6 Luna | 60/60 | 2.4 s | 2.8 s | 6.8k | n/a² | 4 of 11 |
+| 🟡 | **Codex ACP** | ACP (`codex-acp`) | GPT-5.6 Luna | 60/60 | 2.7 s | 4.4 s | 21.2k | n/a² | 4 of 10 |
+| 🟡 | **Claude ACP** | ACP (`claude-agent-acp`) | Haiku | 60/60 | 5.8 s | 7.6 s | 26.6k | $0.0045 | 0 of 0 |
+| ❌ | **Junie** | `junie --task` | junie-lite | 2/60 | 8.1 s | 13.1 s | 36.9k | $0.0062 | 0 of 0 |
+| ❌ | **Junie ACP** | ACP (`junie --acp`) | GPT-5.6 Luna (JetBrains AI) | 0/60 | – | – | – | – | – |
+
+¹ Claude Code 2.1.291 does not know the price of Haiku 5.5. ² The CLI reports tokens, not a price. Wrong issue ids: the ids that the model wrote into the summary line and the real message does not have. The IDE removes all of them, see the README.
+
+Median time per message, from the process start to the message:
+
+```text
+Claude Code Haiku 4.5   ████████████ 2.4 s
+Claude Code Haiku 5.5   ██████████ 2.1 s
+Codex GPT-5.6 Luna      ████████████ 2.4 s
+Codex ACP GPT-5.6 Luna  █████████████ 2.7 s
+Claude ACP Haiku        ████████████████████████████ 5.8 s
+Junie junie-lite        ████████████████████████████████████████ 8.1 s
+```
+
+The full report with examples: [REPORT.md](REPORT.md).
+<!-- results:end -->
 
 The cost of one call without a diff ([`results/probe-overhead.md`](results/probe-overhead.md)):
 
 | Call | Median | Input tokens | Cost |
 |---|---|---|---|
 | `claude -p --model haiku`, no switches | 3.2 s | 19 949 | $0.029 |
-| `claude -p` with the switches above | 1.8 s | 332 | $0.0004 |
+| `claude -p` with the switches below | 1.8 s | 332 | $0.0004 |
 | `codex exec -m gpt-5.6-luna`, no switches | 2.7 s | 9 627 | – |
-| `codex exec` with the switches above | 2.5 s | 2 507 | – |
+| `codex exec` with the switches below | 2.5 s | 2 507 | – |
 
 Short version:
 
@@ -39,7 +56,7 @@ Short version:
 - **The IDE builds the context, the agent only writes text.** The prompt holds the diff, the `--stat`, the recent commit subjects of the same files, and the branch name. The agent gets no tools.
 - **Plain text is enough.** With the system prompt below, no run returned quotes, fences, or a preamble. Structured output (`--json-schema`, `--output-schema`) works but is not needed.
 - **Without the right switches the call is slow and dirty.** The defaults cost 20k input tokens instead of a few hundred, Haiku thinks for 10–30 s, and user hooks and settings put foreign text into the message.
-- **Do not trust issue ids from the model.** The models copy an unrelated id from the history, or invent one, about half the time. Keep only the ids from the branch name.
+- **Do not trust issue ids from the model.** In the benchmark 11 of the 37 ids that the models wrote were wrong: an id of an unrelated recent commit, or an invented one. Keep only the ids from the branch name.
 
 ## Quick start
 
@@ -151,7 +168,7 @@ The adapters come from `PATH`. `CODEX_ACP_BIN`, `CLAUDE_ACP_BIN`, and `JUNIE_BIN
 
 ## Issue ids
 
-The models ignore the rule in the prompt. In an earlier run on a private monorepo, the models wrote an issue id 13 times, and 6 of them were wrong: an id of an unrelated recent commit, or an invented one. [`dropUntrustedIssueIds`](src/clean.ts) keeps in the summary line only the ids that the branch name contains. The IDE can add the right id from the branch itself.
+The models ignore the rule in the prompt. In the benchmark the models wrote an issue id 37 times, and 11 of them were wrong: an id of an unrelated recent commit, or an invented one. [`dropUntrustedIssueIds`](src/clean.ts) keeps in the summary line only the ids that the branch name contains. The IDE can add the right id from the branch itself.
 
 ## The diff budget
 

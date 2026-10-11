@@ -2,41 +2,301 @@
   {
     "id": "codex-1",
     "repo": "~/src/codex",
-    "sha": "74772623db"
+    "sha": "c3db180493"
   },
   {
     "id": "codex-2",
     "repo": "~/src/codex",
-    "sha": "37f4bb94c9"
+    "sha": "af70018080"
   },
   {
     "id": "codex-3",
     "repo": "~/src/codex",
-    "sha": "3e4707b34b"
+    "sha": "3bebaea8f2"
   },
   {
     "id": "codex-4",
     "repo": "~/src/codex",
-    "sha": "62fb56ee56"
+    "sha": "fe50b61689"
+  },
+  {
+    "id": "codex-5",
+    "repo": "~/src/codex",
+    "sha": "1bfabb21fe"
+  },
+  {
+    "id": "codex-6",
+    "repo": "~/src/codex",
+    "sha": "da4cf1cdea"
+  },
+  {
+    "id": "codex-7",
+    "repo": "~/src/codex",
+    "sha": "16e2722c50"
+  },
+  {
+    "id": "codex-8",
+    "repo": "~/src/codex",
+    "sha": "8e7f646974"
+  },
+  {
+    "id": "codex-9",
+    "repo": "~/src/codex",
+    "sha": "42624fd63b"
+  },
+  {
+    "id": "codex-10",
+    "repo": "~/src/codex",
+    "sha": "fdc23b93b8"
+  },
+  {
+    "id": "codex-11",
+    "repo": "~/src/codex",
+    "sha": "970b7f2ff4"
+  },
+  {
+    "id": "codex-12",
+    "repo": "~/src/codex",
+    "sha": "a7b86b6201"
+  },
+  {
+    "id": "codex-13",
+    "repo": "~/src/codex",
+    "sha": "e77773085c"
+  },
+  {
+    "id": "codex-14",
+    "repo": "~/src/codex",
+    "sha": "399be2d6b5"
+  },
+  {
+    "id": "codex-15",
+    "repo": "~/src/codex",
+    "sha": "e24190caa9"
+  },
+  {
+    "id": "codex-16",
+    "repo": "~/src/codex",
+    "sha": "9894a14c81"
+  },
+  {
+    "id": "codex-17",
+    "repo": "~/src/codex",
+    "sha": "da6e68951b"
+  },
+  {
+    "id": "codex-18",
+    "repo": "~/src/codex",
+    "sha": "ba9567daf3"
+  },
+  {
+    "id": "codex-19",
+    "repo": "~/src/codex",
+    "sha": "f1087ff151"
+  },
+  {
+    "id": "codex-20",
+    "repo": "~/src/codex",
+    "sha": "280d56b1d8"
+  },
+  {
+    "id": "codex-21",
+    "repo": "~/src/codex",
+    "sha": "333beecd41"
+  },
+  {
+    "id": "codex-22",
+    "repo": "~/src/codex",
+    "sha": "4f38432d87"
+  },
+  {
+    "id": "codex-23",
+    "repo": "~/src/codex",
+    "sha": "304c8de4c6"
+  },
+  {
+    "id": "codex-24",
+    "repo": "~/src/codex",
+    "sha": "dc08ace782"
+  },
+  {
+    "id": "codex-25",
+    "repo": "~/src/codex",
+    "sha": "bb8cada846"
+  },
+  {
+    "id": "codex-26",
+    "repo": "~/src/codex",
+    "sha": "4b81410a80"
+  },
+  {
+    "id": "codex-27",
+    "repo": "~/src/codex",
+    "sha": "7c1e36c23f"
+  },
+  {
+    "id": "codex-28",
+    "repo": "~/src/codex",
+    "sha": "ce950dcf26"
+  },
+  {
+    "id": "codex-29",
+    "repo": "~/src/codex",
+    "sha": "1bc02aea50"
+  },
+  {
+    "id": "codex-30",
+    "repo": "~/src/codex",
+    "sha": "a10c8127f7"
   },
   {
     "id": "intellij-community-1",
     "repo": "~/src/intellij-community",
-    "subject": "IJPL-249847 LSP API: make LspClientImpl.lsp4jServer property public"
+    "subject": "misc codeowners: give IJPL the community productLayout package"
   },
   {
     "id": "intellij-community-2",
     "repo": "~/src/intellij-community",
-    "subject": "preserve daemon suspensions across modality changes (IJPL-244762)"
+    "subject": "[jps] rename builder to mitigate TW-104697"
   },
   {
     "id": "intellij-community-3",
     "repo": "~/src/intellij-community",
-    "subject": "IJPL-254187 provide public api for building rich commit details"
+    "subject": "IDEA-392279 [java-psi] Follow-up: remove redundant instantiateWith call"
   },
   {
     "id": "intellij-community-4",
     "repo": "~/src/intellij-community",
-    "subject": "PY-92887 Preserve operator overload types during type inference"
+    "subject": "IJPL-251091 assert every step of the previous-window lookup"
+  },
+  {
+    "id": "intellij-community-5",
+    "repo": "~/src/intellij-community",
+    "subject": "[editor] IJPL-254637 naive eg-walker, adjust benchmark, part10"
+  },
+  {
+    "id": "intellij-community-6",
+    "repo": "~/src/intellij-community",
+    "subject": "AND-150 [android] Remove dead Compose compiler keys from K2ComposeCompilerConfigurationProvider"
+  },
+  {
+    "id": "intellij-community-7",
+    "repo": "~/src/intellij-community",
+    "subject": "[MRI-5544] switch intellij.java.ide.customization.backend.tests"
+  },
+  {
+    "id": "intellij-community-8",
+    "repo": "~/src/intellij-community",
+    "subject": "KTIJ-39860 [kotlin] Fix impossible is check null quick-fix"
+  },
+  {
+    "id": "intellij-community-9",
+    "repo": "~/src/intellij-community",
+    "subject": "[git] Initialize recentCommitsProvider in the background (IJPL-248720)"
+  },
+  {
+    "id": "intellij-community-10",
+    "repo": "~/src/intellij-community",
+    "subject": "cleanup [python]: Clean up formatting and imports in PyTypeChecker"
+  },
+  {
+    "id": "intellij-community-11",
+    "repo": "~/src/intellij-community",
+    "subject": "[skeleton] IJPL-257214 use the fallback renderer instead of the canvas in the Windows frontend"
+  },
+  {
+    "id": "intellij-community-12",
+    "repo": "~/src/intellij-community",
+    "subject": "[pycharm] PY-89999 Pin the Python tool window startup-availability default on the split frontend"
+  },
+  {
+    "id": "intellij-community-13",
+    "repo": "~/src/intellij-community",
+    "subject": "[platform] Raise the EDT priority natively to prevent its inheritance by new threads on Windows (RIDER-143488, KT-89579)"
+  },
+  {
+    "id": "intellij-community-14",
+    "repo": "~/src/intellij-community",
+    "subject": "[UI, Navigation] IJPL-257977 Fix NavigationService cancellation exceptions"
+  },
+  {
+    "id": "intellij-community-15",
+    "repo": "~/src/intellij-community",
+    "subject": "[editor] IJPL-254637 naive eg-walker, JvmStatic, part45"
+  },
+  {
+    "id": "intellij-community-16",
+    "repo": "~/src/intellij-community",
+    "subject": "fix [VCS]: Git log: second pressing of \"delete branch\" button logs an error IJPL-163588"
+  },
+  {
+    "id": "intellij-community-17",
+    "repo": "~/src/intellij-community",
+    "subject": "[plugin-manager] IJPL-257815 Keep selected rows below sticky headers after refresh"
+  },
+  {
+    "id": "intellij-community-18",
+    "repo": "~/src/intellij-community",
+    "subject": "[java] IDEA-369985 SlowOp in GenerateToStringWorker.exitsMethodDialog"
+  },
+  {
+    "id": "intellij-community-19",
+    "repo": "~/src/intellij-community",
+    "subject": "[Java. Tests] IDEA-394694 Fix project test leak in `com.intellij.java.codeInspection.GlobalInspectionContextTest`"
+  },
+  {
+    "id": "intellij-community-20",
+    "repo": "~/src/intellij-community",
+    "subject": "KTIJ-40403 [kotlin] Offer remove question quick fix before callable references"
+  },
+  {
+    "id": "intellij-community-21",
+    "repo": "~/src/intellij-community",
+    "subject": "[kotlin] inline: inline type parameters"
+  },
+  {
+    "id": "intellij-community-22",
+    "repo": "~/src/intellij-community",
+    "subject": "[markdown] IJPL-257188 Support the Sticky Lines feature in Markdown"
+  },
+  {
+    "id": "intellij-community-23",
+    "repo": "~/src/intellij-community",
+    "subject": "[markdown] IJPL-257766 Support Setext headers in Markdown live preview"
+  },
+  {
+    "id": "intellij-community-24",
+    "repo": "~/src/intellij-community",
+    "subject": "[Java. Tests] IDEA-393917 move com.intellij.find to com.intellij.java.find"
+  },
+  {
+    "id": "intellij-community-25",
+    "repo": "~/src/intellij-community",
+    "subject": "refactoring air: give the observe fixture a fake process table"
+  },
+  {
+    "id": "intellij-community-26",
+    "repo": "~/src/intellij-community",
+    "subject": "[editor] IJPL-254637 naive eg-walker, rename, part3"
+  },
+  {
+    "id": "intellij-community-27",
+    "repo": "~/src/intellij-community",
+    "subject": "[editor] IJPL-254637 naive eg-walker, DAG pretty printer, part19"
+  },
+  {
+    "id": "intellij-community-28",
+    "repo": "~/src/intellij-community",
+    "subject": "IJPL-252267 Add UI for editing default excludes"
+  },
+  {
+    "id": "intellij-community-29",
+    "repo": "~/src/intellij-community",
+    "subject": "[editor] IJPL-254637 naive eg-walker, run-length encode, part2"
+  },
+  {
+    "id": "intellij-community-30",
+    "repo": "~/src/intellij-community",
+    "subject": "[editor] IJPL-254637 naive eg-walker, move offset, part51"
   }
 ]
