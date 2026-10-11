@@ -1,0 +1,42 @@
+[
+  {
+    "id": "codex-1",
+    "repo": "~/src/codex",
+    "sha": "74772623db"
+  },
+  {
+    "id": "codex-2",
+    "repo": "~/src/codex",
+    "sha": "37f4bb94c9"
+  },
+  {
+    "id": "codex-3",
+    "repo": "~/src/codex",
+    "sha": "3e4707b34b"
+  },
+  {
+    "id": "codex-4",
+    "repo": "~/src/codex",
+    "sha": "62fb56ee56"
+  },
+  {
+    "id": "intellij-community-1",
+    "repo": "~/src/intellij-community",
+    "subject": "IJPL-249847 LSP API: make LspClientImpl.lsp4jServer property public"
+  },
+  {
+    "id": "intellij-community-2",
+    "repo": "~/src/intellij-community",
+    "subject": "preserve daemon suspensions across modality changes (IJPL-244762)"
+  },
+  {
+    "id": "intellij-community-3",
+    "repo": "~/src/intellij-community",
+    "subject": "IJPL-254187 provide public api for building rich commit details"
+  },
+  {
+    "id": "intellij-community-4",
+    "repo": "~/src/intellij-community",
+    "subject": "PY-92887 Preserve operator overload types during type inference"
+  }
+]

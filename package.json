@@ -1,0 +1,12 @@
+{
+  "name": "commit-msg-agent",
+  "description": "Generate a git commit message with a terminal coding agent: Claude Code, Codex, Junie, or an ACP adapter",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "gen": "bun gen.ts",
+    "bench": "bun bench.ts",
+    "report": "bun report.ts"
+  }
+}

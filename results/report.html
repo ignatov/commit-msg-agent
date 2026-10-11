@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Commit message generation: agent comparison</title>
+<style>
+  :root { --fg:#1f2328; --muted:#59636e; --line:#d1d9e0; --bg:#fff; --good:#1a7f37; --ok:#9a6700; --bad:#cf222e; }
+  @media (prefers-color-scheme: dark) { :root { --fg:#e6edf3; --muted:#9198a1; --line:#3d444d; --bg:#0d1117; --good:#3fb950; --ok:#d29922; --bad:#f85149; } }
+  body { font: 14px/1.5 -apple-system, "Segoe UI", sans-serif; color: var(--fg); background: var(--bg); max-width: 1400px; margin: 32px auto; padding: 0 24px; }
+  h1 { font-size: 24px; margin-bottom: 4px; } h2 { font-size: 18px; margin-top: 36px; }
+  .lead { color: var(--muted); margin-top: 0; }
+  table { border-collapse: collapse; width: 100%; margin-top: 8px; }
+  th, td { border-bottom: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { font-weight: 600; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+  td.num, th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .sub { color: var(--muted); font-size: 12px; }
+  ul { margin: 0; padding-left: 18px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; font-weight: 600; white-space: nowrap; border: 1px solid currentColor; }
+  .badge.good { color: var(--good); } .badge.ok { color: var(--ok); } .badge.bad { color: var(--bad); }
+  .fail { color: var(--bad); } .actual { color: var(--muted); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+  .card { border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; }
+  .card b { display: block; font-size: 15px; margin-bottom: 4px; }
+  code { font-size: 12px; }
+</style></head><body>
+<h1>Commit message generation through a terminal agent</h1>
+<p class="lead">2026-10-11. 8 real commits of <a href="https://github.com/openai/codex">openai/codex</a> and <a href="https://github.com/JetBrains/intellij-community">JetBrains/intellij-community</a>, diff from 0.6 KB to 51.1 KB, 2 runs per commit and agent. Cheap models only. Claude Code 2.1.291, codex-cli 0.154.0, codex-acp 2.2.2, claude-agent-acp 0.89.1, Junie 26.10.5, macOS.</p>
+
+<h2>Verdict</h2>
+<div class="cards">
+  <div class="card"><b>Use the CLI mode, not ACP</b><code>claude -p</code> and <code>codex exec</code> give the message in 2–3 seconds for less than 2 cents. The IDE collects the diff and gives it to the agent; the agent only writes text.</div>
+  <div class="card"><b>Claude Code and Codex are ready</b>All runs succeeded and the output was clean text. Haiku 4.5 is the fastest; Haiku 5.5 writes the best explanations; Luna writes short and exact messages.</div>
+  <div class="card"><b>Junie is not suitable today</b>Its CLI returns a task report instead of the message and makes 6–9 model calls. Its ACP mode needs the IDE for authorization.</div>
+  <div class="card"><b>Do not trust issue ids from the model</b>Models copy an unrelated id from the history or invent one in about half of the cases. The IDE takes the id from the branch name only.</div>
+</div>
+
+<h2>Agents</h2>
+<table>
+<tr><th>Agent</th><th>Model</th><th>Status</th><th class="num">Success</th><th class="num">Median</th><th class="num">p90</th><th class="num">Input tokens</th><th class="num">Model calls</th><th class="num">Cost per message</th><th>Notes</th></tr>
+<tr>
+    <td><b>Claude Code</b><div class="sub"><code>claude -p</code></div></td>
+    <td>Haiku 4.5</td>
+    <td><span class="badge good">Ready</span></td>
+    <td class="num">16/16</td>
+    <td class="num">2.8 s</td>
+    <td class="num">4.5 s</td>
+    <td class="num">5,907</td>
+    <td class="num">1</td>
+    <td class="num">$0.0108</td>
+    <td><ul><li>The cheapest per message.</li><li>Needs four switches against user settings, see the README.</li></ul></td>
+  </tr>
+<tr>
+    <td><b>Claude Code</b><div class="sub"><code>claude -p</code></div></td>
+    <td>Haiku 5.5</td>
+    <td><span class="badge good">Ready</span></td>
+    <td class="num">16/16</td>
+    <td class="num">2.3 s</td>
+    <td class="num">2.9 s</td>
+    <td class="num">7,680</td>
+    <td class="num">1</td>
+    <td class="num">unreliable</td>
+    <td><ul><li>Explains why a change was made more often than the other models.</li><li>Claude Code 2.1.291 does not know this model: the reported cost is not reliable.</li></ul></td>
+  </tr>
+<tr>
+    <td><b>Codex</b><div class="sub"><code>codex exec</code></div></td>
+    <td>GPT-5.6 Luna</td>
+    <td><span class="badge good">Ready</span></td>
+    <td class="num">16/16</td>
+    <td class="num">2.7 s</td>
+    <td class="num">3.0 s</td>
+    <td class="num">6,659</td>
+    <td class="num">1</td>
+    <td class="num">not reported</td>
+    <td><ul><li>Short and exact messages, rarely a body.</li><li>The CLI reports tokens, not a price.</li></ul></td>
+  </tr>
+<tr>
+    <td><b>Codex ACP</b><div class="sub">ACP (<code>codex-acp</code>)</div></td>
+    <td>GPT-5.6 Luna</td>
+    <td><span class="badge ok">Works, costs more</span></td>
+    <td class="num">16/16</td>
+    <td class="num">3.3 s</td>
+    <td class="num">4.2 s</td>
+    <td class="num">21,011</td>
+    <td class="num">1</td>
+    <td class="num">not reported</td>
+    <td><ul><li>ACP has no system prompt and no switches to cut the context: every call carries the full agent setup.</li><li>3.2× the input tokens of <code>codex exec</code>.</li></ul></td>
+  </tr>
+<tr>
+    <td><b>Claude ACP</b><div class="sub">ACP (<code>claude-agent-acp</code>)</div></td>
+    <td>Haiku</td>
+    <td><span class="badge ok">Works, slow</span></td>
+    <td class="num">16/16</td>
+    <td class="num">5.7 s</td>
+    <td class="num">8.3 s</td>
+    <td class="num">26,506</td>
+    <td class="num">1</td>
+    <td class="num">$0.0045</td>
+    <td><ul><li>ACP takes none of the <code>claude -p</code> switches: the full Claude Code prompt, tools, hooks, and user settings come with every call.</li><li>4.5× the input tokens and 2.0× the time of <code>claude -p</code>.</li><li>Without a model switch the session uses the default model of the user, Opus in this test: $0.15 for one word.</li></ul></td>
+  </tr>
+<tr>
+    <td><b>Junie</b><div class="sub"><code>junie --task</code></div></td>
+    <td>junie-lite</td>
+    <td><span class="badge bad">Not suitable</span></td>
+    <td class="num">2/16</td>
+    <td class="num">10.9 s</td>
+    <td class="num">10.9 s</td>
+    <td class="num">40,613</td>
+    <td class="num">8</td>
+    <td class="num">$0.0069</td>
+    <td><ul><li>Returns a Markdown task report, not the message. 2 of 16 reports held the message in a code block.</li><li>Runs a full agent loop: 8 model calls per message, 3.8× the time of <code>claude -p</code>.</li><li>The test account could use only junie-lite. Other models: authorization failed.</li></ul></td>
+  </tr>
+<tr>
+    <td><b>Junie ACP</b><div class="sub">ACP (<code>junie --acp</code>)</div></td>
+    <td>GPT-5.6 Luna (JetBrains AI)</td>
+    <td><span class="badge bad">Not testable outside an IDE</span></td>
+    <td class="num">0/16</td>
+    <td class="num">–</td>
+    <td class="num">–</td>
+    <td class="num">–</td>
+    <td class="num">–</td>
+    <td class="num">–</td>
+    <td><ul><li>Outside an IDE every prompt ends at once with <code>cancelled</code>: the JetBrains AI authorization fails.</li><li>A JetBrains IDE gives Junie its credentials when it starts the agent. A test needs a running IDE.</li></ul></td>
+  </tr>
+</table>
+<p class="sub">Median and p90: the full time from the process start to the message. Input tokens: the average for one message; it includes the agent's own instructions. Cost: as the CLI reports it.</p>
+
+<h2>Examples: the first line of the message</h2>
+<table>
+<tr><th>Commit</th><th>Real message</th><th>Claude Code<div class="sub">Haiku 4.5</div></th><th>Claude Code<div class="sub">Haiku 5.5</div></th><th>Codex<div class="sub">GPT-5.6 Luna</div></th><th>Codex ACP<div class="sub">GPT-5.6 Luna</div></th><th>Claude ACP<div class="sub">Haiku</div></th><th>Junie<div class="sub">junie-lite</div></th><th>Junie ACP<div class="sub">GPT-5.6 Luna (JetBrains AI)</div></th></tr>
+<tr><td>codex<div class="sub">0.7 KB diff</div></td><td class="actual">Stop overriding Rust debuginfo in Bazel CI (#40864)</td><td>ci: remove Rust debug info flags from CI config</td><td>Remove redundant debuginfo rustc flags from Bazel CI config</td><td>Remove explicit Rust debuginfo flags from CI configuration</td><td>Remove explicit Rust debug flags from CI config</td><td>ci: drop explicit rustc debuginfo flags from Bazel CI</td><td class="fail">failed</td><td class="fail">failed</td></tr>
+<tr><td>codex<div class="sub">6.8 KB diff</div></td><td class="actual">Respect paginated history when stopping background tasks (#40787)</td><td>Support paginated history lookup in agents overview stop</td><td>TUI: Use paginated history when stopping agent turns</td><td>Use paginated history when stopping background tasks</td><td>Use history mode when stopping background tasks</td><td>Use history mode when finding turns to stop</td><td class="fail">failed</td><td class="fail">failed</td></tr>
+<tr><td>codex<div class="sub">11.9 KB diff</div></td><td class="actual">Support persistent reasoning effort (#40799)</td><td>Add support for persistent reasoning effort level</td><td>Add persistent reasoning effort level and wire it to disabled</td><td>Support persistent reasoning effort mode</td><td>Support persistent reasoning effort mode</td><td>Add persistent reasoning effort option</td><td class="fail">failed</td><td class="fail">failed</td></tr>
+<tr><td>codex<div class="sub">51.1 KB diff</div></td><td class="actual">Route Guardian inference through dedicated endpoints (#40892)</td><td>Add support for free Guardian endpoints</td><td>Route Guardian review through dedicated endpoints behind a flag</td><td>Route Guardian inference through dedicated Codex endpoints</td><td>Route Guardian inference through dedicated Codex endpoints</td><td>Route Guardian inference to dedicated endpoints when enabled</td><td class="fail">failed</td><td class="fail">failed</td></tr>
+<tr><td>intellij-community<div class="sub">0.6 KB diff</div></td><td class="actual">IJPL-249847 LSP API: make LspClientImpl.lsp4jServer property public</td><td>refactor LSP: expose lsp4jServer with @ApiStatus.Internal</td><td>LSP: expose lsp4jServer to API consumers</td><td>expose lsp4jServer as an internal API property</td><td>LSP: expose LspClientImpl.lsp4jServer as an internal API</td><td>refactor LSP: make lsp4jServer public as an ApiStatus.Internal API</td><td>refactor LSP: expose LspClientImpl.lsp4jServer as internal API</td><td class="fail">failed</td></tr>
+<tr><td>intellij-community<div class="sub">3.5 KB diff</div></td><td class="actual">preserve daemon suspensions across modality changes (IJPL-244762)</td><td>respect nested daemon suspensions when modality changes</td><td>Fix daemon update-by-timer check ignoring nested suspensions</td><td>respect nested daemon suspensions during modality changes</td><td>respect nested daemon suspensions after modality changes</td><td>Keep update-by-timer disabled while any daemon suspension is active</td><td class="fail">failed</td><td class="fail">failed</td></tr>
+<tr><td>intellij-community<div class="sub">9.4 KB diff</div></td><td class="actual">IJPL-254187 provide public api for building rich commit details</td><td>[vcs-log] extract commit changes viewer into a reusable component</td><td>Extract the common details panel and changes dialog into a reusable CommitChangesViewer</td><td>vcs-log: extract commit changes viewer for reuse</td><td>vcs-log: extract reusable commit changes viewer</td><td>[vcs-log] move commit changes dialog into CommitChangesViewer</td><td class="fail">failed</td><td class="fail">failed</td></tr>
+<tr><td>intellij-community<div class="sub">36.7 KB diff</div></td><td class="actual">PY-92887 Preserve operator overload types during type inference</td><td>preserve arguments for operator resolution with generic union members</td><td>[python] Resolve operators per union member with their arguments</td><td>Preserve arguments and sides in operator resolution</td><td>refactor [python]: Preserve arguments during operator resolution</td><td>Keep operator arguments and side with resolved union members</td><td>refactor [python]: Restructure operator resolution to preserve argument and side information</td><td class="fail">failed</td></tr>
+</table>
+<p class="sub">Issue ids are already removed: these commits have no branch name.</p>
+
+<h2>What the integration needs</h2>
+<ul>
+  <li>The diff of the changes that the user selected in the commit dialog, the recent commit messages of the same files, and the branch name. The IDE builds this; the git index is not the same as the selection.</li>
+  <li>Special switches for each agent: without them a call is 10× more expensive, up to 30 s slower, and user settings (hooks, plugins, memory files) can put foreign text into the message.</li>
+  <li>A version check of the CLI: the switches exist only in current versions.</li>
+</ul>
+
+<h2>Not checked</h2>
+<ul>
+  <li>Windows and Linux.</li>
+  <li>A Claude subscription login; the tests used an API key helper.</li>
+  <li>Junie with a JetBrains AI subscription, and Junie ACP inside the running IDE.</li>
+</ul>
+</body></html>
