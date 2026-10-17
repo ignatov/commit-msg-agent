@@ -21,10 +21,10 @@ Both prompts hold the `--stat`, the recent commit subjects of the same files, an
 Quality: the mean score of the judge from 1 to 5, see [the judge](REPORT-FILES.md#the-judge). ¹ Claude Code 2.1.291 does not know the price of Haiku 5.5. ² The CLI reports tokens, not a price. Input tokens: the sum over all model calls of one message, with the cached tokens.
 
 - ⏱ **The files mode is slower at every size.** The agent makes at least one more model call to read the diff: +1.9 s for Haiku 5.5 and +2.3 s for Luna on a commit under 5 KB, +4.3 s and +6.1 s over 60 KB.
-- ✅ **It helps Claude on large commits.** Over 60 KB, where the diff mode cuts the diff, the mean score goes from 3.62 to 4.23 for Haiku 4.5 and from 3.77 to 4.15 for Haiku 5.5. Luna gains nothing: 4.00 to 4.08.
-- ✅ **Haiku 5.5 writes better messages at every size:** 4.29 to 4.64, better on 21 commits and worse on 9. In the files mode it thinks before the answer in 45 of 70 messages, in the diff mode in 3. A higher effort in the diff mode can give the same without the tools: not tested.
-- ❌ **Haiku 4.5 is too slow for the files mode:** 4.1 tool calls per message, p90 30.2 s, the slowest 86.4 s.
-- 🟡 **For the IDE:** keep the diff mode, and switch to the files mode when the diff does not fit the budget: 13 of the 70 commits here. With Haiku 5.5 the files mode can also be the default: 4.4 s instead of 2.1 s for better messages.
+- ✅ **Haiku 5.5 writes better messages, most of all on small commits:** 4.29 to 4.64, better on 21 commits and worse on 9 (p = 0.04), under 5 KB 9 better and 1 worse. Both modes see the whole diff of a small commit, but in the files mode the model thinks before the answer: in 45 of 70 messages, in the diff mode in 3. A higher effort in the diff mode can give the same without the tools: not tested.
+- 🟡 **Large commits: a hint, not a result.** Over 60 KB the mean score goes from 3.62 to 4.23 for Haiku 4.5 and from 3.77 to 4.15 for Haiku 5.5, but per commit it is 6 better and 1 worse for Haiku 4.5 (p = 0.13) and 5 better and 4 worse for Haiku 5.5. 13 commits are too few.
+- ❌ **Haiku 4.5 and Luna gain nothing.** Per commit 24 better and 18 worse for Haiku 4.5 (p = 0.44), 13 and 17 for Luna (p = 0.58). Haiku 4.5 also makes 4.1 tool calls per message: p90 30.2 s, the slowest 86.4 s.
+- 🟡 **For the IDE:** keep the diff mode. With Haiku 5.5 the files mode gives better messages for 4.4 s instead of 2.1 s; a higher effort in the diff mode may give them for less, and needs a check first. Commits over the diff budget need a larger sample.
 
 ## By diff size
 
@@ -57,11 +57,13 @@ The files message against the diff message of the same model, per commit:
 
 | Diff size | Haiku 4.5 | Haiku 5.5 | Luna |
 |---|---|---|---|
-| under 5 KB | 7 better, 7 same, 7 worse | 9 better, 11 same, 1 worse | 2 better, 12 same, 7 worse |
-| 5–20 KB | 8 better, 9 same, 5 worse | 3 better, 18 same, 1 worse | 4 better, 11 same, 7 worse |
-| 20–60 KB | 3 better, 6 same, 5 worse | 4 better, 7 same, 3 worse | 4 better, 9 same, 1 worse |
-| over 60 KB | 6 better, 6 same, 1 worse | 5 better, 4 same, 4 worse | 3 better, 8 same, 2 worse |
-| **all** | **24 better, 28 same, 18 worse** | **21 better, 40 same, 9 worse** | **13 better, 40 same, 17 worse** |
+| under 5 KB | 7 better, 7 same, 7 worse, p = 1.00 | 9 better, 11 same, 1 worse, p = 0.02 | 2 better, 12 same, 7 worse, p = 0.18 |
+| 5–20 KB | 8 better, 9 same, 5 worse, p = 0.58 | 3 better, 18 same, 1 worse, p = 0.63 | 4 better, 11 same, 7 worse, p = 0.55 |
+| 20–60 KB | 3 better, 6 same, 5 worse, p = 0.73 | 4 better, 7 same, 3 worse, p = 1.00 | 4 better, 9 same, 1 worse, p = 0.38 |
+| over 60 KB | 6 better, 6 same, 1 worse, p = 0.13 | 5 better, 4 same, 4 worse, p = 1.00 | 3 better, 8 same, 2 worse, p = 1.00 |
+| **all** | **24 better, 28 same, 18 worse, p = 0.44** | **21 better, 40 same, 9 worse, p = 0.04** | **13 better, 40 same, 17 worse, p = 0.58** |
+
+p: the two-sided sign test over the commits with different scores. Under 0.05 the difference is unlikely to be chance.
 
 Median time per message by diff size:
 

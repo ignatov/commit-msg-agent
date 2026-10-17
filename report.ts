@@ -1,11 +1,14 @@
 // Builds REPORT.md, results/report.html, and the results block of README.md from benchmark runs.
 //
 //   bun report.ts [results/bench-agents*.jsonl ...]
+import { $ } from "bun"
 import { readdirSync, readFileSync, writeFileSync } from "node:fs"
 
 const inputs = process.argv.length > 2 ? process.argv.slice(2) :
   readdirSync("results").filter(it => /^bench-agents.*\.jsonl$/.test(it)).map(it => `results/${it}`)
 const rows: any[] = inputs.flatMap(file => readFileSync(file, "utf8").split("\n").filter(Boolean).map(it => JSON.parse(it)))
+// The date of the commit with the data: a rebuild of the report on another day keeps it. New data has no commit yet.
+const date = (await $`git log -1 --format=%cs -- ${inputs}`.nothrow().text()).trim() || new Date().toISOString().slice(0, 10)
 
 interface AgentInfo {
   config: string
@@ -161,7 +164,7 @@ const html = `<!doctype html>
   code { font-size: 12px; }
 </style></head><body>
 <h1>Commit message generation through a terminal agent</h1>
-<p class="lead">${new Date().toISOString().slice(0, 10)}. ${commits.length} real commits of <a href="https://github.com/openai/codex">openai/codex</a> and <a href="https://github.com/JetBrains/intellij-community">JetBrains/intellij-community</a>, diff from ${kb(Math.min(...diffSizes))} to ${kb(Math.max(...diffSizes))}, ${runsPerTask} runs per commit and agent. Cheap models only. Claude Code 2.1.291, codex-cli 0.154.0, codex-acp 2.2.2, claude-agent-acp 0.89.1, Junie 26.10.5, macOS.</p>
+<p class="lead">${date}. ${commits.length} real commits of <a href="https://github.com/openai/codex">openai/codex</a> and <a href="https://github.com/JetBrains/intellij-community">JetBrains/intellij-community</a>, diff from ${kb(Math.min(...diffSizes))} to ${kb(Math.max(...diffSizes))}, ${runsPerTask} runs per commit and agent. Cheap models only. Claude Code 2.1.291, codex-cli 0.154.0, codex-acp 2.2.2, claude-agent-acp 0.89.1, Junie 26.10.5, macOS.</p>
 
 <h2>Verdict</h2>
 <div class="cards">
@@ -206,7 +209,6 @@ writeFileSync("results/report.html", html)
 const STATUS = { good: "✅", ok: "🟡", bad: "❌" }
 const cell = (text: string) => text.replace(/\|/g, "\\|").replace(/\n/g, " ")
 const md = (html: string) => html.replace(/<code>(.*?)<\/code>/g, "`$1`").replace(/<[^>]+>/g, "")
-const date = new Date().toISOString().slice(0, 10)
 const scope = `${commits.length} real commits of [openai/codex](https://github.com/openai/codex) and ` +
   `[JetBrains/intellij-community](https://github.com/JetBrains/intellij-community), diff from ${kb(Math.min(...diffSizes))} to ` +
   `${kb(Math.max(...diffSizes))}, ${runsPerTask === 1 ? "one run" : `${runsPerTask} runs`} per commit and agent, ${date}.`
@@ -222,7 +224,7 @@ function agentTable(): string {
       `${s.ok ? `${issueIds(info.config).wrong} of ${issueIds(info.config).written}` : "–"} |`)
   }
   out.push("", "¹ Claude Code 2.1.291 does not know the price of Haiku 5.5. ² The CLI reports tokens, not a price. " +
-    "Wrong issue ids: the ids that the model wrote into the summary line and the real message does not have. The IDE removes all of them, see the README.")
+    "Wrong issue ids: the ids that the model wrote into the summary line and the real message does not have. The IDE removes all of them, see [Issue ids](README.md#issue-ids).")
   return out.join("\n")
 }
 

@@ -3,6 +3,7 @@
 //   bun report-files.ts [results/bench-files*.jsonl ...]
 //
 // The judge scores come from the .judge.jsonl file next to each input, see judge.ts.
+import { $ } from "bun"
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { DEFAULT_LIMITS } from "./src/prompt"
 
@@ -80,6 +81,19 @@ function versus(pair: Pair, tasks: string[]): { better: number; same: number; wo
 }
 
 const fmtScore = (s: { score?: number }) => (s.score === undefined ? "–" : s.score.toFixed(2))
+
+/** The two-sided sign test over the commits that differ: how likely is this split of better and worse by chance? */
+function signTest(better: number, worse: number): number {
+  const n = better + worse
+  let coefficient = 1
+  let tail = 0
+  for (let i = 0; i <= n; i++) {
+    if (i >= Math.max(better, worse)) tail += coefficient
+    coefficient = (coefficient * (n - i)) / (i + 1)
+  }
+  return Math.min(1, (2 * tail) / 2 ** n)
+}
+const pValue = (v: { better: number; worse: number }) => `p = ${signTest(v.better, v.worse).toFixed(2)}`
 const cost = (pair: Pair, s: { cost?: number }) =>
   pair.model === "Haiku 4.5" ? (s.cost === undefined ? "–" : `$${s.cost.toFixed(4)}`) : pair.agent === "Codex" ? "n/a²" : "n/a¹"
 
@@ -126,13 +140,14 @@ function versusTable(): string {
     const tasks = inBucket(index)
     out.push(`| ${bucket.name} | ${PAIRS.map(pair => {
       const v = versus(pair, tasks)
-      return `${v.better} better, ${v.same} same, ${v.worse} worse`
+      return `${v.better} better, ${v.same} same, ${v.worse} worse, ${pValue(v)}`
     }).join(" | ")} |`)
   })
   out.push(`| **all** | ${PAIRS.map(pair => {
     const v = versus(pair, commits)
-    return `**${v.better} better, ${v.same} same, ${v.worse} worse**`
+    return `**${v.better} better, ${v.same} same, ${v.worse} worse, ${pValue(v)}**`
   }).join(" | ")} |`)
+  out.push("", "p: the two-sided sign test over the commits with different scores. Under 0.05 the difference is unlikely to be chance.")
   return out.join("\n")
 }
 
@@ -208,22 +223,31 @@ function verdict(): string[] {
   const thinking = (config: string) => rows.filter(it => it.config === config && it.ok && it.usage.reasoning > 0).length
   const v = versus(h55, commits)
   const h45files = stats(h45.files)
+  const small55 = versus(h55, small)
+  const large45 = versus(h45, large)
+  const large55 = versus(h55, large)
+  const all45 = versus(h45, commits)
+  const allLuna = versus(luna, commits)
   return [
     `⏱ **The files mode is slower at every size.** The agent makes at least one more model call to read the diff: ` +
       `+${delta(h55, small)} for Haiku 5.5 and +${delta(luna, small)} for Luna on a commit under 5 KB, +${delta(h55, large)} and +${delta(luna, large)} over 60 KB.`,
-    `✅ **It helps Claude on large commits.** Over 60 KB, where the diff mode cuts the diff, the mean score goes from ${score(h45.diff, large)} to ${score(h45.files, large)} ` +
-      `for Haiku 4.5 and from ${score(h55.diff, large)} to ${score(h55.files, large)} for Haiku 5.5. Luna gains nothing: ${score(luna.diff, large)} to ${score(luna.files, large)}.`,
-    `✅ **Haiku 5.5 writes better messages at every size:** ${score(h55.diff)} to ${score(h55.files)}, better on ${v.better} commits and worse on ${v.worse}. ` +
-      `In the files mode it thinks before the answer in ${thinking(h55.files)} of ${commits.length} messages, in the diff mode in ${thinking(h55.diff)}. ` +
-      `A higher effort in the diff mode can give the same without the tools: not tested.`,
-    `❌ **Haiku 4.5 is too slow for the files mode:** ${h45files.tools?.toFixed(1)} tool calls per message, p90 ${seconds(h45files.p90)}, the slowest ${seconds(h45files.max)}.`,
-    `🟡 **For the IDE:** keep the diff mode, and switch to the files mode when the diff does not fit the budget: ${large.length} of the ${commits.length} commits here. ` +
-      `With Haiku 5.5 the files mode can also be the default: ${seconds(stats(h55.files).p50)} instead of ${seconds(stats(h55.diff).p50)} for better messages.`,
+    `✅ **Haiku 5.5 writes better messages, most of all on small commits:** ${score(h55.diff)} to ${score(h55.files)}, ` +
+      `better on ${v.better} commits and worse on ${v.worse} (${pValue(v)}), under 5 KB ${small55.better} better and ${small55.worse} worse. ` +
+      `Both modes see the whole diff of a small commit, but in the files mode the model thinks before the answer: in ${thinking(h55.files)} of ${commits.length} messages, ` +
+      `in the diff mode in ${thinking(h55.diff)}. A higher effort in the diff mode can give the same without the tools: not tested.`,
+    `🟡 **Large commits: a hint, not a result.** Over 60 KB the mean score goes from ${score(h45.diff, large)} to ${score(h45.files, large)} for Haiku 4.5 ` +
+      `and from ${score(h55.diff, large)} to ${score(h55.files, large)} for Haiku 5.5, but per commit it is ${large45.better} better and ${large45.worse} worse ` +
+      `for Haiku 4.5 (${pValue(large45)}) and ${large55.better} better and ${large55.worse} worse for Haiku 5.5. ${large.length} commits are too few.`,
+    `❌ **Haiku 4.5 and Luna gain nothing.** Per commit ${all45.better} better and ${all45.worse} worse for Haiku 4.5 (${pValue(all45)}), ` +
+      `${allLuna.better} and ${allLuna.worse} for Luna (${pValue(allLuna)}). Haiku 4.5 also makes ${h45files.tools?.toFixed(1)} tool calls per message: p90 ${seconds(h45files.p90)}, the slowest ${seconds(h45files.max)}.`,
+    `🟡 **For the IDE:** keep the diff mode. With Haiku 5.5 the files mode gives better messages for ${seconds(stats(h55.files).p50)} instead of ${seconds(stats(h55.diff).p50)}; ` +
+      `a higher effort in the diff mode may give them for less, and needs a check first. Commits over the diff budget need a larger sample.`,
   ]
 }
 
 const sizes = [...diffChars.values()]
-const date = rows.length ? new Date().toISOString().slice(0, 10) : ""
+// The date of the commit with the data: a rebuild of the report on another day keeps it. New data has no commit yet.
+const date = (await $`git log -1 --format=%cs -- ${inputs}`.nothrow().text()).trim() || new Date().toISOString().slice(0, 10)
 const scope = `${commits.length} real commits of [openai/codex](https://github.com/openai/codex) and ` +
   `[JetBrains/intellij-community](https://github.com/JetBrains/intellij-community), diff from ${kb(Math.min(...sizes))} to ${kb(Math.max(...sizes))}, ` +
   `one run per commit and config, ${date}.`
@@ -316,7 +340,9 @@ writeFileSync("REPORT-FILES.md", report)
 const esc = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 const inline = (md: string) => esc(md).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>")
 const CONFIGS = PAIRS.flatMap(pair => MODES(pair).map(it => ({ pair, mode: it.mode, config: it.config })))
-const head = (first: string) => `<tr><th>${first}</th><th class="num">Commits</th>${CONFIGS.map(it => `<th class="num">${it.pair.short}<div class="sub">${it.mode}</div></th>`).join("")}</tr>`
+/** One tint marks the files mode: its rows in the results, its columns in the other tables. */
+const tint = (mode: string) => (mode === "files" ? " files" : "")
+const head = (first: string) => `<tr><th>${first}</th><th class="num">Commits</th>${CONFIGS.map(it => `<th class="num${tint(it.mode)}">${it.pair.short}<div class="sub">${it.mode}</div></th>`).join("")}</tr>`
 
 /** One row per diff size. In each pair the better value is bold: the shorter time, the higher score. */
 function htmlBuckets(value: (config: string, tasks: string[]) => number | undefined, format: (value: number | undefined) => string, higherIsBetter: boolean): string {
@@ -325,7 +351,7 @@ function htmlBuckets(value: (config: string, tasks: string[]) => number | undefi
     const cells = PAIRS.flatMap(pair => {
       const [a, b] = [value(pair.diff, tasks), value(pair.files, tasks)]
       const best = a === undefined || b === undefined || a === b ? undefined : (higherIsBetter ? b > a : b < a) ? "files" : "diff"
-      return [["diff", a], ["files", b]].map(([mode, it]) => `<td class="num">${mode === best ? `<b>${format(it as number)}</b>` : format(it as number)}</td>`)
+      return [["diff", a], ["files", b]].map(([mode, it]) => `<td class="num${tint(mode as string)}">${mode === best ? `<b>${format(it as number)}</b>` : format(it as number)}</td>`)
     })
     return `<tr><td>${bucket.name}</td><td class="num">${tasks.length}</td>${cells.join("")}</tr>`
   })
@@ -334,24 +360,26 @@ function htmlBuckets(value: (config: string, tasks: string[]) => number | undefi
 
 const htmlSummary = PAIRS.flatMap(pair => MODES(pair).map(({ mode, config }) => {
   const st = stats(config)
-  return `<tr><td><b>${pair.agent}</b><div class="sub">${pair.model}</div></td><td>${mode}</td><td class="num">${st.ok}/${st.runs}</td>` +
+  return `<tr class="${tint(mode).trim()}"><td><b>${pair.agent}</b><div class="sub">${pair.model}</div></td><td>${mode}</td><td class="num">${st.ok}/${st.runs}</td>` +
     `<td class="num">${seconds(st.p50)}</td><td class="num">${seconds(st.p90)}</td><td class="num">${st.tools === undefined ? "–" : st.tools.toFixed(1)}</td>` +
     `<td class="num">${st.input === undefined ? "–" : Math.round(st.input).toLocaleString("en")}</td><td class="num">${cost(pair, st)}</td><td class="num"><b>${fmtScore(st)}</b></td></tr>`
 })).join("\n")
 
-const htmlVersus = BUCKETS.map((bucket, index) => `<tr><td>${bucket.name}</td>${PAIRS.map(pair => {
-  const v = versus(pair, inBucket(index))
-  return `<td><span class="better">${v.better} better</span>, ${v.same} same, <span class="worse">${v.worse} worse</span></td>`
-}).join("")}</tr>`).join("\n")
+const htmlVersusCell = (v: { better: number; same: number; worse: number }) =>
+  `<td><span class="better">${v.better} better</span>, ${v.same} same, <span class="worse">${v.worse} worse</span><div class="sub">${pValue(v)}</div></td>`
+const htmlVersus = [
+  ...BUCKETS.map((bucket, index) => `<tr><td>${bucket.name}</td>${PAIRS.map(pair => htmlVersusCell(versus(pair, inBucket(index)))).join("")}</tr>`),
+  `<tr><td><b>all</b></td>${PAIRS.map(pair => htmlVersusCell(versus(pair, commits))).join("")}</tr>`,
+].join("\n")
 
 const htmlExamples = inBucket(BUCKETS.length - 1).map(task => {
   const first = rows.find(it => it.task === task)
   const cells = CONFIGS.map(it => {
     const row = rows.find(r => r.task === task && r.config === it.config && r.run === 0)
-    if (!row) return "<td>–</td>"
-    if (!row.ok) return `<td class="fail">failed</td>`
+    if (!row) return `<td class="${tint(it.mode).trim()}">–</td>`
+    if (!row.ok) return `<td class="fail${tint(it.mode)}">failed</td>`
     const tools = row.toolCalls ? `, ${row.toolCalls.length} tool${row.toolCalls.length === 1 ? "" : "s"}` : ""
-    return `<td>${esc(row.final.split("\n")[0])}<div class="sub"><b>${scoreOf(row) ?? "–"}</b> · ${seconds(row.wallMs)}${tools}</div></td>`
+    return `<td class="${tint(it.mode).trim()}">${esc(row.final.split("\n")[0])}<div class="sub"><b>${scoreOf(row) ?? "–"}</b> · ${seconds(row.wallMs)}${tools}</div></td>`
   }).join("")
   return `<tr><td>${task}<div class="sub">${kb(first.diffChars)} diff</div></td><td class="actual">${esc(first.actual.split("\n")[0])}</td>${cells}</tr>`
 }).join("\n")
@@ -365,10 +393,11 @@ const cards = verdict().map(text => {
 const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Commit message generation: the diff or the files</title>
 <style>
-  :root { --fg:#1f2328; --muted:#59636e; --line:#d1d9e0; --bg:#fff; --good:#1a7f37; --ok:#9a6700; --bad:#cf222e; }
-  @media (prefers-color-scheme: dark) { :root { --fg:#e6edf3; --muted:#9198a1; --line:#3d444d; --bg:#0d1117; --good:#3fb950; --ok:#d29922; --bad:#f85149; } }
+  :root { --fg:#1f2328; --muted:#59636e; --line:#d1d9e0; --bg:#fff; --good:#1a7f37; --ok:#9a6700; --bad:#cf222e; --files:rgba(9,105,218,.09); }
+  @media (prefers-color-scheme: dark) { :root { --fg:#e6edf3; --muted:#9198a1; --line:#3d444d; --bg:#0d1117; --good:#3fb950; --ok:#d29922; --bad:#f85149; --files:rgba(56,139,253,.16); } }
   body { font: 14px/1.5 -apple-system, "Segoe UI", sans-serif; color: var(--fg); background: var(--bg); max-width: 1400px; margin: 32px auto; padding: 0 24px; }
   h1 { font-size: 24px; margin-bottom: 4px; } h2 { font-size: 18px; margin-top: 36px; } h3 { font-size: 15px; margin-top: 20px; }
+  .files { background: var(--files); }
   .lead { color: var(--muted); margin-top: 0; }
   table { border-collapse: collapse; width: 100%; margin-top: 8px; }
   th, td { border-bottom: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
@@ -403,7 +432,7 @@ ${cards}
 <tr><th>Agent</th><th>Mode</th><th class="num">Success</th><th class="num">Median</th><th class="num">p90</th><th class="num">Tool calls</th><th class="num">Input tokens</th><th class="num">Cost per message</th><th class="num">Quality</th></tr>
 ${htmlSummary}
 </table>
-<p class="sub">Median and p90: the full time from the process start to the message. Tool calls and input tokens: the average for one message, with the cached tokens. Quality: the mean judge score from 1 to 5. ¹ Claude Code 2.1.291 does not know the price of Haiku 5.5. ² The CLI reports tokens, not a price.</p>
+<p class="sub"><span class="files">&nbsp;Tinted&nbsp;</span>: the files mode. Median and p90: the full time from the process start to the message. Tool calls and input tokens: the average for one message, with the cached tokens. Quality: the mean judge score from 1 to 5. ¹ Claude Code 2.1.291 does not know the price of Haiku 5.5. ² The CLI reports tokens, not a price.</p>
 
 <h2>By diff size</h2>
 <h3>Median time per message</h3>
@@ -416,10 +445,11 @@ ${htmlBuckets((config, tasks) => stats(config, tasks).score, it => (it === undef
 <tr><th>Diff size</th>${PAIRS.map(it => `<th>${it.agent}<div class="sub">${it.model}</div></th>`).join("")}</tr>
 ${htmlVersus}
 </table>
+<p class="sub">p: the two-sided sign test over the commits with different scores. Under 0.05 the difference is unlikely to be chance.</p>
 
 <h2>Examples: the commits over 60 KB</h2>
 <table>
-<tr><th>Commit</th><th>Real message</th>${CONFIGS.map(it => `<th>${it.pair.short}<div class="sub">${it.mode}</div></th>`).join("")}</tr>
+<tr><th>Commit</th><th>Real message</th>${CONFIGS.map(it => `<th class="${tint(it.mode).trim()}">${it.pair.short}<div class="sub">${it.mode}</div></th>`).join("")}</tr>
 ${htmlExamples}
 </table>
 <p class="sub">The first line of the message, the judge score, the time, and the tool calls. Issue ids are already removed: these commits have no branch name.</p>

@@ -1,17 +1,18 @@
 # commit-msg-agent
 
-Generate a git commit message with the terminal coding agent that the user already has: Claude Code, Codex, Junie, or their ACP adapters.
+Generate a git commit message with the terminal coding agent that the user already has: Claude Code, Codex, Junie, or their ACP adapters. This is a prototype and a benchmark for the IDE action "Generate commit message".
 
-This is a prototype and a benchmark. It answers three questions for an IDE feature "Generate commit message":
+| Question | Answer |
+|---|---|
+| Which agent can the IDE call today? | ✅ **Claude Code** (`claude -p`) and **Codex** (`codex exec`): a clean message for 60 of 60 commits. 🟡 The ACP adapters work, but carry the full agent context into every call. ❌ **Junie** is not usable yet. |
+| How does the IDE call it? | **One process per message,** with the switches of [Claude Code](#claude-code) or [Codex](#codex), in an empty directory, and the prompt on stdin. The IDE builds the prompt: the diff, the `--stat`, the recent commit subjects of the same files, and the branch name. The agent gets no tools and answers in plain text: no run returned quotes, fences, or a preamble. |
+| How fast and how expensive is one message? | **2–3 s** with Haiku or GPT-5.6 Luna, **1–2 cents** with Haiku 4.5. Only with these switches: by default a call costs 20k input tokens, and Haiku thinks for 10–30 s. |
+| Give the agent the diff, or let it read the files? | **The diff.** When the agent reads the files itself, a message takes 2–3.5 times longer. Only Haiku 5.5 writes better messages that way, 21 commits better and 9 worse, most of all on small commits. For large commits the data shows a hint, not a result: [the details](#results-the-diff-or-the-files). |
+| Can the IDE trust the issue ids from the model? | **No.** 11 of the 37 ids that the models wrote were wrong. Take the id from the branch name, see [Issue ids](#issue-ids). |
 
-- How do you call each agent so that the output is one clean string?
-- How fast and how expensive is a call with a cheap model?
-- Which agents and modes are usable today?
+The reports with examples: [the agents](REPORT.md) ([HTML](results/report.html)) and [the diff or the files](REPORT-FILES.md) ([HTML](results/report-files.html)).
 
-The full report with examples: [REPORT.md](REPORT.md). The same in HTML for a product audience: [`results/report.html`](results/report.html).
-The diff in the prompt against the files for the agent: [REPORT-FILES.md](REPORT-FILES.md), in HTML [`results/report-files.html`](results/report-files.html).
-
-## Results
+## Results: the agents
 
 <!-- results:start -->
 > 60 real commits of [openai/codex](https://github.com/openai/codex) and [JetBrains/intellij-community](https://github.com/JetBrains/intellij-community), diff from 0.4 KB to 102.0 KB, one run per commit and agent, 2026-10-11. Cheap models only.
@@ -26,7 +27,7 @@ The diff in the prompt against the files for the agent: [REPORT-FILES.md](REPORT
 | ❌ | **Junie** | `junie --task` | junie-lite | 2/60 | 8.1 s | 13.1 s | 36.9k | $0.0062 | 0 of 0 |
 | ❌ | **Junie ACP** | ACP (`junie --acp`) | GPT-5.6 Luna (JetBrains AI) | 0/60 | – | – | – | – | – |
 
-¹ Claude Code 2.1.291 does not know the price of Haiku 5.5. ² The CLI reports tokens, not a price. Wrong issue ids: the ids that the model wrote into the summary line and the real message does not have. The IDE removes all of them, see the README.
+¹ Claude Code 2.1.291 does not know the price of Haiku 5.5. ² The CLI reports tokens, not a price. Wrong issue ids: the ids that the model wrote into the summary line and the real message does not have. The IDE removes all of them, see [Issue ids](README.md#issue-ids).
 
 Median time per message, from the process start to the message:
 
@@ -42,7 +43,7 @@ Junie junie-lite        ██████████████████�
 The full report with examples: [REPORT.md](REPORT.md).
 <!-- results:end -->
 
-The cost of one call without a diff ([`results/probe-overhead.md`](results/probe-overhead.md)):
+Why the switches matter: one call without a diff, with and without them ([`results/probe-overhead.md`](results/probe-overhead.md)):
 
 | Call | Median | Input tokens | Cost |
 |---|---|---|---|
@@ -51,14 +52,32 @@ The cost of one call without a diff ([`results/probe-overhead.md`](results/probe
 | `codex exec -m gpt-5.6-luna`, no switches | 2.7 s | 9 627 | – |
 | `codex exec` with the switches below | 2.5 s | 2 507 | – |
 
-Short version:
+## Results: the diff or the files
 
-- **Use the CLI mode.** `claude -p` and `codex exec` return the message in about 2–3 seconds. ACP adapters work, but they carry the full agent context into every call.
-- **The IDE builds the context, the agent only writes text.** The prompt holds the diff, the `--stat`, the recent commit subjects of the same files, and the branch name. The agent gets no tools.
-- **Plain text is enough.** With the system prompt below, no run returned quotes, fences, or a preamble. Structured output (`--json-schema`, `--output-schema`) works but is not needed.
-- **The files instead of the diff: slower, and better for Claude on large commits.** When the agent reads the changes itself, a message takes 2–3 times longer, and Haiku 4.5 often 30 s. Haiku 5.5 writes better messages at every size, Luna gains nothing. See [Files mode](#files-mode).
-- **Without the right switches the call is slow and dirty.** The defaults cost 20k input tokens instead of a few hundred, Haiku thinks for 10–30 s, and user hooks and settings put foreign text into the message.
-- **Do not trust issue ids from the model.** In the benchmark 11 of the 37 ids that the models wrote were wrong: an id of an unrelated recent commit, or an invented one. Keep only the ids from the branch name.
+In the files mode the prompt holds only the list of the changed files, and the agent runs `git diff --cached` itself with read-only tools. The setup and the pitfalls: [Files mode](#files-mode).
+
+<!-- files:start -->
+> 70 real commits of [openai/codex](https://github.com/openai/codex) and [JetBrains/intellij-community](https://github.com/JetBrains/intellij-community), diff from 0.4 KB to 994.2 KB, one run per commit and config, 2026-10-17. The judge scored 70 commits.
+
+| Agent | Model | Mode | Success | Median | p90 | Tool calls | Input tokens | Cost per message | Quality |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|
+| Claude Code | Haiku 4.5 | diff | 70/70 | 2.7 s | 4.4 s | – | 9.1k | $0.0175 | 4.13 |
+| Claude Code | Haiku 4.5 | files | 70/70 | 9.0 s | 30.2 s | 4.1 | 72.2k | $0.0287 | 4.24 |
+| Claude Code | Haiku 5.5 | diff | 70/70 | 2.1 s | 2.9 s | – | 11.9k | n/a¹ | 4.29 |
+| Claude Code | Haiku 5.5 | files | 70/70 | 4.4 s | 7.1 s | 1.3 | 25.5k | n/a¹ | 4.64 |
+| Codex | GPT-5.6 Luna | diff | 70/70 | 2.5 s | 3.0 s | – | 9.0k | n/a² | 4.10 |
+| Codex | GPT-5.6 Luna | files | 70/70 | 5.8 s | 10.0 s | 1.7 | 19.2k | n/a² | 4.04 |
+
+Quality: the mean score of the judge from 1 to 5, see [the judge](REPORT-FILES.md#the-judge). ¹ Claude Code 2.1.291 does not know the price of Haiku 5.5. ² The CLI reports tokens, not a price. Input tokens: the sum over all model calls of one message, with the cached tokens.
+
+- ⏱ **The files mode is slower at every size.** The agent makes at least one more model call to read the diff: +1.9 s for Haiku 5.5 and +2.3 s for Luna on a commit under 5 KB, +4.3 s and +6.1 s over 60 KB.
+- ✅ **Haiku 5.5 writes better messages, most of all on small commits:** 4.29 to 4.64, better on 21 commits and worse on 9 (p = 0.04), under 5 KB 9 better and 1 worse. Both modes see the whole diff of a small commit, but in the files mode the model thinks before the answer: in 45 of 70 messages, in the diff mode in 3. A higher effort in the diff mode can give the same without the tools: not tested.
+- 🟡 **Large commits: a hint, not a result.** Over 60 KB the mean score goes from 3.62 to 4.23 for Haiku 4.5 and from 3.77 to 4.15 for Haiku 5.5, but per commit it is 6 better and 1 worse for Haiku 4.5 (p = 0.13) and 5 better and 4 worse for Haiku 5.5. 13 commits are too few.
+- ❌ **Haiku 4.5 and Luna gain nothing.** Per commit 24 better and 18 worse for Haiku 4.5 (p = 0.44), 13 and 17 for Luna (p = 0.58). Haiku 4.5 also makes 4.1 tool calls per message: p90 30.2 s, the slowest 86.4 s.
+- 🟡 **For the IDE:** keep the diff mode. With Haiku 5.5 the files mode gives better messages for 4.4 s instead of 2.1 s; a higher effort in the diff mode may give them for less, and needs a check first. Commits over the diff budget need a larger sample.
+
+By diff size and with examples: [REPORT-FILES.md](REPORT-FILES.md). The same in HTML for a product audience: [`results/report-files.html`](results/report-files.html).
+<!-- files:end -->
 
 ## Quick start
 
@@ -83,16 +102,18 @@ bun gen.ts --dry-run | scripts/codex.sh
 
 ## Claude Code
 
+Run it from this repository. `prompt.txt` is the output of `bun gen.ts --repo <your repo> --dry-run`.
+
 ```sh
-cd "$(mktemp -d)"
-env -u CLAUDECODE claude -p \
+system=$(cat prompts/system.md)
+(cd "$(mktemp -d)" && env -u CLAUDECODE claude -p \
   --model claude-haiku-5-5 --effort low \
-  --system-prompt "$(cat prompts/system.md)" \
+  --system-prompt "$system" \
   --tools "" \
   --safe-mode \
   --settings '{"alwaysThinkingEnabled":false,"advisorModel":"","disableAllHooks":true}' \
   --strict-mcp-config --disable-slash-commands --no-session-persistence \
-  --output-format json < prompt.txt | jq -r .result
+  --output-format json) < prompt.txt | jq -r .result
 ```
 
 | Switch | Why |
@@ -102,7 +123,7 @@ env -u CLAUDECODE claude -p \
 | `--safe-mode` | Skips CLAUDE.md, plugins, skills, output styles, and hooks. The login still works. |
 | `--settings {...}` | The user settings still apply in `--safe-mode`. This layer turns off three of them, see the pitfalls. |
 | `--strict-mcp-config` | Starts no MCP servers of the user. |
-| `--no-session-persistence` | Writes no transcript to `~/.claude/projects`. |
+| `--no-session-persistence` | Writes no transcript to `~/.claude/projects`. A long tool output of the files mode still lands there. |
 | an empty working directory | A repository can have SessionStart hooks and `.mcp.json`. In a large monorepo they added 17 s to each call. |
 | `env -u CLAUDECODE` | A parent Claude Code session sets this variable. Do not pass it to the child. |
 | the prompt on stdin | A diff can be longer than the Windows command line limit (32k characters), and it must not show in `ps`. |
@@ -125,8 +146,8 @@ The answer is JSON: the message is in `.result`, a failure sets `.is_error`.
 ## Codex
 
 ```sh
-dir=$(mktemp -d); cp prompts/system.md "$dir/"; cd "$dir"
-codex exec -m gpt-5.6-luna \
+dir=$(mktemp -d); cp prompts/system.md "$dir/"
+(cd "$dir" && codex exec -m gpt-5.6-luna \
   -c model_reasoning_effort='"low"' \
   -c model_instructions_file="\"$dir/system.md\"" \
   -c project_doc_max_bytes=0 -c skills.include_instructions=false \
@@ -135,7 +156,7 @@ codex exec -m gpt-5.6-luna \
   -c features.plugins=false -c features.apps=false -c 'mcp_servers={}' \
   -c features.shell_tool=false -c features.unified_exec=false -c web_search='"disabled"' \
   --skip-git-repo-check --ephemeral --sandbox read-only \
-  -o "$dir/message.txt" - < prompt.txt >/dev/null && cat "$dir/message.txt"
+  -o "$dir/message.txt" - >/dev/null) < prompt.txt && cat "$dir/message.txt"
 ```
 
 The full list of keys is in [`scripts/codex.sh`](scripts/codex.sh). For streaming, use `--json` and take the last `item.completed` event of type `agent_message`.
@@ -177,6 +198,13 @@ The models ignore the rule in the prompt. In the benchmark the models wrote an i
 
 The diff gets 60k characters. Each file gets an equal share, from 400 to 8000 characters, so a commit with 100 files shows a part of every file. The `--stat` is always complete.
 
+The budget is rough at both ends:
+
+- **A few large files get less.** The share that a small file does not use is lost: codex-30, 102 KB in 12 files, got 26k characters of its diff.
+- **Many files get more.** An omitted file still shows its header: intellij-community-33, 494 files, got 157k characters.
+
+On the 13 commits over 60 KB the prompt held from 6 % to 55 % of the diff. These are the commits where the files mode gave a hint of better messages.
+
 ## Files mode
 
 The prompt can hold the list of the changed files instead of the diff. The agent then runs `git diff --cached` itself and reads what it needs, also beyond the diff budget:
@@ -186,46 +214,39 @@ bun gen.ts --files -v                 # Claude Code, Haiku 5.5; -v prints the to
 bun gen.ts --files --agent codex      # Codex, GPT-5.6 Luna
 ```
 
-<!-- files:start -->
-> 70 real commits of [openai/codex](https://github.com/openai/codex) and [JetBrains/intellij-community](https://github.com/JetBrains/intellij-community), diff from 0.4 KB to 994.2 KB, one run per commit and config, 2026-10-17. The judge scored 70 commits.
+The results: [Results: the diff or the files](#results-the-diff-or-the-files).
 
-| Agent | Model | Mode | Success | Median | p90 | Tool calls | Input tokens | Cost per message | Quality |
-|---|---|---|---:|---:|---:|---:|---:|---:|---:|
-| Claude Code | Haiku 4.5 | diff | 70/70 | 2.7 s | 4.4 s | – | 9.1k | $0.0175 | 4.13 |
-| Claude Code | Haiku 4.5 | files | 70/70 | 9.0 s | 30.2 s | 4.1 | 72.2k | $0.0287 | 4.24 |
-| Claude Code | Haiku 5.5 | diff | 70/70 | 2.1 s | 2.9 s | – | 11.9k | n/a¹ | 4.29 |
-| Claude Code | Haiku 5.5 | files | 70/70 | 4.4 s | 7.1 s | 1.3 | 25.5k | n/a¹ | 4.64 |
-| Codex | GPT-5.6 Luna | diff | 70/70 | 2.5 s | 3.0 s | – | 9.0k | n/a² | 4.10 |
-| Codex | GPT-5.6 Luna | files | 70/70 | 5.8 s | 10.0 s | 1.7 | 19.2k | n/a² | 4.04 |
+The agent runs in the repository with read-only tools. The bare command for Claude Code, from the repository with the staged changes:
 
-Quality: the mean score of the judge from 1 to 5, see [the judge](REPORT-FILES.md#the-judge). ¹ Claude Code 2.1.291 does not know the price of Haiku 5.5. ² The CLI reports tokens, not a price. Input tokens: the sum over all model calls of one message, with the cached tokens.
+```sh
+cma=/path/to/commit-msg-agent
+bun $cma/gen.ts --files --dry-run > /tmp/prompt.txt
+env -u CLAUDECODE claude -p \
+  --model claude-haiku-5-5 --effort low \
+  --system-prompt "$(cat $cma/prompts/system.md; echo; cat $cma/prompts/files.md)" \
+  --tools Bash,Read,Grep,Glob --permission-mode dontAsk --setting-sources user \
+  --safe-mode \
+  --settings '{"alwaysThinkingEnabled":false,"advisorModel":"","disableAllHooks":true,"attribution":{"commit":"","pr":""}}' \
+  --strict-mcp-config --disable-slash-commands --no-session-persistence \
+  --output-format json < /tmp/prompt.txt |
+  jq -r .result | perl -0ne 'print "$1\n" if /.*<commit_message>\s*(.*?)\s*<\/commit_message>/s'
+```
 
-- ⏱ **The files mode is slower at every size.** The agent makes at least one more model call to read the diff: +1.9 s for Haiku 5.5 and +2.3 s for Luna on a commit under 5 KB, +4.3 s and +6.1 s over 60 KB.
-- ✅ **It helps Claude on large commits.** Over 60 KB, where the diff mode cuts the diff, the mean score goes from 3.62 to 4.23 for Haiku 4.5 and from 3.77 to 4.15 for Haiku 5.5. Luna gains nothing: 4.00 to 4.08.
-- ✅ **Haiku 5.5 writes better messages at every size:** 4.29 to 4.64, better on 21 commits and worse on 9. In the files mode it thinks before the answer in 45 of 70 messages, in the diff mode in 3. A higher effort in the diff mode can give the same without the tools: not tested.
-- ❌ **Haiku 4.5 is too slow for the files mode:** 4.1 tool calls per message, p90 30.2 s, the slowest 86.4 s.
-- 🟡 **For the IDE:** keep the diff mode, and switch to the files mode when the diff does not fit the budget: 13 of the 70 commits here. With Haiku 5.5 the files mode can also be the default: 4.4 s instead of 2.1 s for better messages.
-
-By diff size and with examples: [REPORT-FILES.md](REPORT-FILES.md). The same in HTML for a product audience: [`results/report-files.html`](results/report-files.html).
-<!-- files:end -->
-
-The agent runs in the repository with read-only tools:
-
-- **Claude Code:** `--tools Bash,Read,Grep,Glob --permission-mode dontAsk --setting-sources user`, and `"attribution": {"commit": "", "pr": ""}` in `--settings`. The other switches are the same as above.
-- **Codex:** the same switches as above without `features.shell_tool=false` and `features.unified_exec=false`. The commands run in the `read-only` sandbox.
-- **The prompt** adds [`prompts/files.md`](prompts/files.md) to the system prompt, names the diff command, and asks for the message between `<commit_message>` tags.
+- **Claude Code:** the switches of the diff mode, plus `--tools Bash,Read,Grep,Glob --permission-mode dontAsk --setting-sources user` and `"attribution"` in `--settings`. The working directory is the repository.
+- **Codex:** the switches of the diff mode without `features.shell_tool=false` and `features.unified_exec=false`. The commands run in the `read-only` sandbox.
+- **The prompt** adds [`prompts/files.md`](prompts/files.md) to the system prompt, names the diff command, and asks for the message between `<commit_message>` tags. The `perl` line takes the last tagged block.
 
 ### Pitfalls
 
-1. **With the Bash tool, Claude Code adds a `Co-Authored-By: Claude …` trailer** to every commit message: a system reminder tells the model to. `"attribution": {"commit": ""}` turns it off.
-2. **After the tool calls a model can write notes around the message:** "Now I understand the change…", sometimes two drafts. Haiku 4.5 did it in 69 of its 70 answers. Ask for the message between tags and take the last tagged block. Structured output also works, but Claude Code then makes the model call a `StructuredOutput` tool, and a small commit takes twice as long.
-3. **`dontAsk` is the read-only switch.** Claude Code runs the commands that it knows as read-only, such as `git diff`, `git log`, `cat`, and `rg`, and denies the rest. In the test it denied `git commit`, `git stash`, `git add`, `git checkout --`, `rm`, `touch`, and `echo > file`. No allow list is needed.
-4. **Skip the settings of the repository.** An allow rule in `.claude/settings.json` runs its command without a prompt, also in `dontAsk`, and the diff is text from the repository that can carry instructions. `--setting-sources user` keeps only the user settings, which hold the auth. Claude Code ignores these rules in a workspace that the user has not trusted, with a warning on stderr. The trusted case was not tested.
-5. **Haiku 4.5 explores.** It made 4.1 tool calls per message and ran `git log` in 41 of the 70 messages, although the prompt holds the recent subjects. Haiku 5.5 made 1.3 calls, Luna 1.7.
-6. **The Bash tool description is 30k characters.** It goes into every call, mostly from the prompt cache.
-7. **`dontAsk` denies some read-only git commands.** Claude Code 2.1.291 denied `git diff --cached --relative`, `git diff --cached --stat=100,70`, and `git -C . diff --cached`, but ran `git diff --cached`, `git diff --cached -- <path>`, and `git diff HEAD -- .`. After the denial Haiku 5.5 wrote a note instead of the message, and Haiku 4.5 searched for other ways to the diff. Name a plain command in the prompt, and check `permission_denials` in the result. The benchmark gives the intellij-community clone `diff.relative=true` instead of the flag.
-8. **Long outputs land in `~/.claude/projects`.** Claude Code saves a long command output to `~/.claude/projects/<working directory>/<session>/tool-results/`, also with `--no-session-persistence`, and the model reads it from there with the Read tool. The directory stays after the call.
-9. **A sparse index costs seconds on every call.** At its start Claude Code runs `git ls-files -- ':(icase).claude/settings.local.json'` in the working directory and in the repository root. With a sparse index git expands it to the full index: 1.7 s and 4.7 s in intellij-community, against 0.2 s with a full index. The diff mode does not have this problem: it runs in an empty directory.
+1. **`dontAsk` is the read-only switch.** Claude Code runs the commands that it knows as read-only, such as `git diff`, `git log`, `cat`, and `rg`, and denies the rest. In the test it denied `git commit`, `git stash`, `git add`, `git checkout --`, `rm`, `touch`, and `echo > file`. No allow list is needed.
+2. **Skip the settings of the repository.** An allow rule in `.claude/settings.json` runs its command without a prompt, also in `dontAsk`, and the diff is text from the repository that can carry instructions. `--setting-sources user` keeps only the user settings, which hold the auth. Claude Code ignores these rules in a workspace that the user has not trusted, with a warning on stderr. The trusted case was not tested.
+3. **With the Bash tool, Claude Code adds a `Co-Authored-By: Claude …` trailer** to every commit message: a system reminder tells the model to. `"attribution": {"commit": ""}` turns it off.
+4. **After the tool calls a model can write notes around the message:** "Now I understand the change…", sometimes two drafts. Haiku 4.5 did it in 69 of its 70 answers. Ask for the message between tags and take the last tagged block. Structured output also works, but Claude Code then makes the model call a `StructuredOutput` tool, and a small commit takes twice as long.
+5. **`dontAsk` denies some read-only git commands.** Claude Code 2.1.291 denied `git diff --cached --relative`, `git diff --cached --stat=100,70`, and `git -C . diff --cached`, but ran `git diff --cached`, `git diff --cached -- <path>`, and `git diff HEAD -- .`. After the denial Haiku 5.5 wrote a note instead of the message, and Haiku 4.5 searched for other ways to the diff. Name a plain command in the prompt, and check `permission_denials` in the result. The benchmark gives the intellij-community clone `diff.relative=true` instead of the flag.
+6. **Long outputs land in `~/.claude/projects`.** Claude Code saves a long command output to `~/.claude/projects/<working directory>/<session>/tool-results/`, also with `--no-session-persistence`, and the model reads it from there with the Read tool. The directory stays after the call.
+7. **A sparse index costs seconds on every call.** At its start Claude Code runs `git ls-files -- ':(icase).claude/settings.local.json'` in the working directory and in the repository root. With a sparse index git expands it to the full index: 1.7 s and 4.7 s in intellij-community, against 0.2 s with a full index. The diff mode does not have this problem: it runs in an empty directory.
+8. **Haiku 4.5 explores.** It made 4.1 tool calls per message and ran `git log` in 41 of the 70 messages, although the prompt holds the recent subjects. Haiku 5.5 made 1.3 calls, Luna 1.7.
+9. **The Bash tool description is 30k characters.** It goes into every call, mostly from the prompt cache.
 
 ## Use in an IntelliJ-based IDE
 
@@ -253,6 +274,7 @@ bun report-files.ts
 - The prompt of a task uses only the history before its commit, so the real message does not leak.
 - `+files` runs the agent in a clone under `$TMPDIR/cmsg-sandbox`: HEAD at the parent of the commit, the changes staged, no refs, and no reflog. The clone borrows the objects of the repository and stays for the next run. The first checkout of intellij-community takes about a minute.
 - [`judge.ts`](judge.ts) scores the messages with Claude Opus. It writes `results/<name>.judge.jsonl`, and `report-files.ts` reads it.
+- The files benchmark of 70 commits and 6 configs runs for about an hour. The judge costs about $15 with Opus, most of it for the large diffs.
 
 ## Layout
 
@@ -273,6 +295,9 @@ bun report-files.ts
 | `src/acp.ts` | The ACP client. |
 | `src/clean.ts` | The output cleanup and the issue id filter. |
 | `scripts/*.sh` | The bare command for each agent. |
+| `tasks.json` | The benchmark commits: 35 of openai/codex and 35 of intellij-community. |
+| `results/` | The raw runs (`*.jsonl`), their Markdown views, the judge scores (`*.judge.jsonl`), and the HTML reports. |
+| `REPORT.md`, `REPORT-FILES.md` | The reports, built from `results/`. |
 | `experiments/` | The capture proxy and the Haiku thinking experiment. |
 
 ## Not checked
@@ -284,6 +309,7 @@ bun report-files.ts
 - Old CLI versions, which can lack `--safe-mode`, `--tools`, or `--effort`.
 - The files mode with Junie and the ACP agents, in a working copy with fsmonitor, and with a selection in the commit dialog that is not the git index.
 - The diff mode with a higher effort for Haiku 5.5: in the files mode it thinks more often, and that can be the reason for its better messages.
+- A diff budget that gives the unused share of small files to the large ones, and that counts the headers of omitted files.
 
 ## License
 

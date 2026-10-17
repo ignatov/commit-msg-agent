@@ -12,7 +12,7 @@
 | ❌ | **Junie** | `junie --task` | junie-lite | 2/60 | 8.1 s | 13.1 s | 36.9k | $0.0062 | 0 of 0 |
 | ❌ | **Junie ACP** | ACP (`junie --acp`) | GPT-5.6 Luna (JetBrains AI) | 0/60 | – | – | – | – | – |
 
-¹ Claude Code 2.1.291 does not know the price of Haiku 5.5. ² The CLI reports tokens, not a price. Wrong issue ids: the ids that the model wrote into the summary line and the real message does not have. The IDE removes all of them, see the README.
+¹ Claude Code 2.1.291 does not know the price of Haiku 5.5. ² The CLI reports tokens, not a price. Wrong issue ids: the ids that the model wrote into the summary line and the real message does not have. The IDE removes all of them, see [Issue ids](README.md#issue-ids).
 
 Median time per message, from the process start to the message:
 
