@@ -4,11 +4,12 @@ import { join } from "node:path"
 import { runAcp } from "./acp"
 import { cleanMessage, joinStructured, lastFencedBlock, lastTaggedBlock, MESSAGE_SCHEMA, type StructuredMessage } from "./clean"
 
-export type AgentName = "claude" | "codex" | "junie" | "codex-acp" | "claude-acp" | "junie-acp"
+export type AgentName = "claude" | "codex" | "junie" | "codex-acp" | "claude-acp" | "junie-acp" | "opencode-acp"
 
 /**
  * - `naive`: the default flags. The agent loads its full system prompt, tools, hooks, MCP servers, and memory files.
  * - `lean`: our system prompt, no tools, no MCP servers, no hooks, no project instructions. The user config stays, because it holds the auth.
+ *   OpenCode ACP gets it through the environment, see `opencodeSetup`.
  * - `safe` (claude only): `lean` plus `--safe-mode`, which also skips plugins, skills, output styles, and CLAUDE.md.
  * - `bare` (claude only): `lean` plus `--bare`. It works only with an API key or an `apiKeyHelper`, not with a subscription login.
  */
@@ -73,6 +74,7 @@ const ZERO_USAGE: Usage = { input: 0, cachedInput: 0, cacheWrite: 0, output: 0, 
 
 export async function runAgent(spec: RunSpec, system: string, user: string): Promise<RunResult> {
   if (spec.files && !spec.cwd) throw new Error("the files mode needs cwd: the agent reads the changes there")
+  if (spec.agent === "opencode-acp" && !["naive", "lean"].includes(spec.variant)) throw new Error(`no ${spec.variant} variant for opencode-acp: use naive or lean`)
   if (spec.files && !["claude", "codex"].includes(spec.agent)) throw new Error(`no files mode for ${spec.agent}`)
   switch (spec.agent) {
     case "claude": return runClaude(spec, system, user)
@@ -87,17 +89,27 @@ const ACP_COMMANDS: Record<string, () => string[]> = {
   "codex-acp": () => [process.env.CODEX_ACP_BIN ?? "codex-acp"],
   "claude-acp": () => [process.env.CLAUDE_ACP_BIN ?? "claude-agent-acp"],
   "junie-acp": () => [process.env.JUNIE_BIN ?? "junie", "--acp=true", "--skip-update-check"],
+  "opencode-acp": () => [process.env.OPENCODE_BIN ?? "opencode", "acp"],
 }
 
-/** ACP has no system prompt and no flags to cut the context: the agent runs with its full setup. */
+/** ACP has no system prompt and no flags to cut the context: the agent runs with its full setup. OpenCode reads a config from the environment. */
 async function runAcpAgent(spec: RunSpec, system: string, user: string): Promise<RunResult> {
   const argv = ACP_COMMANDS[spec.agent]()
+  const setup = spec.agent === "opencode-acp" ? opencodeSetup(spec, system, user) : { env: {}, prompt: `${system}\n\n${user}`, options: {} }
   const start = performance.now()
-  const res = await runAcp(argv, { ...childEnv(), ...spec.extraEnv }, `${system}\n\n${user}`, spec.model, spec.timeoutMs)
+  const res = await runAcp(argv, { ...childEnv(), ...setup.env, ...spec.extraEnv }, setup.prompt, spec.model, spec.timeoutMs, setup.options)
   const wallMs = performance.now() - start
   const usage = { ...ZERO_USAGE }
+  // OpenCode reports the last model call in the prompt response, with the cached tokens and the reasoning apart. Its title call is not there.
+  if (spec.agent === "opencode-acp" && res.promptUsage) {
+    usage.cachedInput = res.promptUsage.cachedReadTokens ?? 0
+    usage.cacheWrite = res.promptUsage.cachedWriteTokens ?? 0
+    usage.input = (res.promptUsage.inputTokens ?? 0) + usage.cachedInput + usage.cacheWrite
+    usage.reasoning = res.promptUsage.thoughtTokens ?? 0
+    usage.output = (res.promptUsage.outputTokens ?? 0) + usage.reasoning
+  }
   // Codex ACP reports the used context size. Junie reports tokens.
-  if (res.usage?.used !== undefined) usage.input = res.usage.used
+  else if (res.usage?.used !== undefined) usage.input = res.usage.used
   else if (res.usage) {
     usage.input = res.usage.inputTokens ?? 0
     usage.output = res.usage.outputTokens ?? 0
@@ -107,8 +119,32 @@ async function runAcpAgent(spec: RunSpec, system: string, user: string): Promise
   return {
     ok, rawText: res.text, text: cleanMessage(res.text), error: ok ? undefined : (res.error ?? "empty answer"),
     exitCode: 0, wallMs, usage, startMs: res.startMs, costUsd: res.usage?.cost?.amount,
-    argv: [...argv, `model=${spec.model}`],
+    argv: [...argv, `model=${spec.model}`, ...Object.entries(setup.options).map(([key, value]) => `${key}=${value}`)],
   }
+}
+
+/** The user config of OpenCode can come from the environment: a config file with the providers, and the auth instead of auth.json. */
+const OPENCODE_USER_ENV = ["OPENCODE_CONFIG", "OPENCODE_AUTH_CONTENT"]
+
+/**
+ * A client starts `opencode acp`, so it can give OpenCode a config in the environment. The other ACP agents have no such way.
+ * - `naive`: the default `build` agent: the OpenCode system prompt, 9 or 10 tools, and a title call that sends the whole prompt to a small model once more.
+ * - `lean`: our system prompt in an agent without tools, no title call, and no files of Claude Code, such as ~/.claude/CLAUDE.md and its skills.
+ * The effort is a model variant of OpenCode, for example `low`. Without it ACP takes the first variant: Haiku 4.5 thinks with a 16k budget.
+ * `default` sends no thinking options: Haiku 4.5 does not think then.
+ * Both variants keep no history: by default every session goes into the database of the user. The time is the same as with the file.
+ */
+function opencodeSetup(spec: RunSpec, system: string, user: string): { env: Record<string, string>; prompt: string; options: Record<string, string> } {
+  const env: Record<string, string> = { OPENCODE_DB: ":memory:" }
+  for (const key of OPENCODE_USER_ENV) if (process.env[key]) env[key] = process.env[key]!
+  const effort: Record<string, string> = spec.effort ? { effort: spec.effort } : {}
+  if (spec.variant === "naive") return { env, prompt: `${system}\n\n${user}`, options: effort }
+  // A `*` deny removes every tool from the request, and the list of skills from the system prompt.
+  env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ agent: { commit: { mode: "primary", prompt: system, permission: { "*": "deny" } }, title: { disable: true } } })
+  // Without it, ~/.claude/CLAUDE.md goes into the system prompt also of our agent. A global ~/.config/opencode/AGENTS.md has no switch.
+  env.OPENCODE_DISABLE_CLAUDE_CODE = "1"
+  // The effort last: a change of the model resets it to the first variant.
+  return { env, prompt: user, options: { mode: "commit", ...effort } }
 }
 
 /** Junie has no raw answer: `result` is a Markdown task report, and the message is its last code block. */

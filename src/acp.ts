@@ -12,10 +12,15 @@ export interface AcpResult {
   promptMs: number
   models: string[]
   currentModel?: string
+  /** The last `usage_update`, else the `usage` of the `session/prompt` response. */
   usage?: any
+  /** The `usage` of the `session/prompt` response. */
+  promptUsage?: any
 }
 
-export async function runAcp(argv: string[], env: Record<string, string>, prompt: string, modelId?: string, timeoutMs = 180_000, log?: (line: string) => void): Promise<AcpResult> {
+/** `configOptions` are set after the model, in order: OpenCode takes its agent as `mode` and its reasoning variant as `effort`. */
+export async function runAcp(argv: string[], env: Record<string, string>, prompt: string, modelId?: string, timeoutMs = 180_000,
+  configOptions: Record<string, string> = {}, log?: (line: string) => void): Promise<AcpResult> {
   const cwd = mkdtempSync(join(tmpdir(), "cmsg-acp-"))
   const started = performance.now()
   const proc = Bun.spawn(argv, { cwd, env, stdin: "pipe", stdout: "pipe", stderr: "ignore" })
@@ -85,11 +90,13 @@ export async function runAcp(argv: string[], env: Record<string, string>, prompt
       else await request("session/set_model", { sessionId: session.sessionId, modelId })
       result.currentModel = modelId
     }
+    for (const [configId, value] of Object.entries(configOptions)) await request("session/set_config_option", { sessionId: session.sessionId, configId, value })
     result.startMs = performance.now() - started
     const promptStart = performance.now()
     const response = await request("session/prompt", { sessionId: session.sessionId, prompt: [{ type: "text", text: prompt }] })
     result.promptMs = performance.now() - promptStart
     if (response?.stopReason && response.stopReason !== "end_turn") result.error = `stopReason ${response.stopReason}`
+    result.promptUsage = response?.usage
     usage ??= response?.usage
   }
   catch (error) {
