@@ -1,29 +1,34 @@
 # commit-msg-agent
 
-Generate a git commit message with the terminal coding agent that the user already has: Claude Code, Codex, Junie, or their ACP adapters. This is a prototype and a benchmark for the IDE action "Generate commit message".
+Generate a git commit message with the terminal coding agent that the user already has: Claude Code, Codex, Junie, OpenCode, or their ACP adapters. This is a prototype and a benchmark for the IDE action "Generate commit message".
 
 | Question | Answer |
 |---|---|
-| Which agent can the IDE call today? | ✅ **Claude Code** (`claude -p`) and **Codex** (`codex exec`): a clean message for 60 of 60 commits. 🟡 The ACP adapters work, but carry the full agent context into every call. ❌ **Junie** is not usable yet. |
-| How does the IDE call it? | **One process per message,** with the switches of [Claude Code](#claude-code) or [Codex](#codex), in an empty directory, and the prompt on stdin. The IDE builds the prompt: the diff, the `--stat`, the recent commit subjects of the same files, and the branch name. The agent gets no tools and answers in plain text: no run returned quotes, fences, or a preamble. |
+| Which agent can the IDE call today? | ✅ **Claude Code** (`claude -p`) and **Codex** (`codex exec`): a clean message for 60 of 60 commits. ✅ **OpenCode** over ACP, with our agent in its environment: 60 of 60, 0.4–1.2 s slower than the CLIs, because its process takes 1.0 s to start. 🟡 The other ACP adapters work, but carry the full agent context into every call. ❌ **Junie** is not usable yet. |
+| How does the IDE call it? | **One process per message,** with the switches of [Claude Code](#claude-code) or [Codex](#codex), in an empty directory, and the prompt on stdin. [OpenCode](#opencode-acp) gets the same setup as a config in the environment of `opencode acp`. The IDE builds the prompt: the diff, the `--stat`, the recent commit subjects of the same files, and the branch name. The agent gets no tools and answers in plain text: no run returned quotes, fences, or a preamble. |
 | How fast and how expensive is one message? | **2–3 s** with Haiku or GPT-5.6 Luna, **1–2 cents** with Haiku 4.5. Only with these switches: by default a call costs 20k input tokens, and Haiku thinks for 10–30 s. |
 | Give the agent the diff, or let it read the files? | **The diff.** When the agent reads the files itself, a message takes 2–3.5 times longer. Only Haiku 5.5 writes better messages that way, 21 commits better and 9 worse, most of all on small commits. For large commits the data shows a hint, not a result: [the details](#results-the-diff-or-the-files). |
-| Can the IDE trust the issue ids from the model? | **No.** 11 of the 37 ids that the models wrote were wrong. Take the id from the branch name, see [Issue ids](#issue-ids). |
+| Can the IDE trust the issue ids from the model? | **No.** 25 of the 90 ids that the models wrote were wrong. Take the id from the branch name, see [Issue ids](#issue-ids). |
 
 The reports with examples: [the agents](REPORT.md) ([HTML](results/report.html)) and [the diff or the files](REPORT-FILES.md) ([HTML](results/report-files.html)).
 
 ## Results: the agents
 
 <!-- results:start -->
-> 60 real commits of [openai/codex](https://github.com/openai/codex) and [JetBrains/intellij-community](https://github.com/JetBrains/intellij-community), diff from 0.4 KB to 102.0 KB, one run per commit and agent, 2026-10-11. Cheap models only.
+> 60 real commits of [openai/codex](https://github.com/openai/codex) and [JetBrains/intellij-community](https://github.com/JetBrains/intellij-community), diff from 0.4 KB to 102.0 KB, one run per commit and agent, 2026-10-11 and 2026-10-17. Cheap models only.
 
 | | Agent | Mode | Model | Success | Median | p90 | Input tokens | Cost per message | Wrong issue ids |
 |---|---|---|---|---:|---:|---:|---:|---:|---:|
 | ✅ | **Claude Code** | `claude -p` | Haiku 4.5 | 60/60 | 2.4 s | 3.8 s | 6.0k | $0.0112 | 2 of 12 |
 | ✅ | **Claude Code** | `claude -p` | Haiku 5.5 | 60/60 | 2.1 s | 3.0 s | 7.8k | n/a¹ | 1 of 4 |
 | ✅ | **Codex** | `codex exec` | GPT-5.6 Luna | 60/60 | 2.4 s | 2.8 s | 6.8k | n/a² | 4 of 11 |
+| ✅ | **OpenCode ACP lean** | ACP (`opencode acp`), our agent | GPT-5.6 Luna | 60/60 | 2.9 s | 4.8 s | 4.5k | $0.0011 | 3 of 12 |
+| ✅ | **OpenCode ACP lean** | ACP (`opencode acp`), our agent | Haiku 4.5 | 60/60 | 3.7 s | 6.0 s | 5.8k | $0.0074 | 4 of 14 |
+| ✅ | **OpenCode ACP lean** | ACP (`opencode acp`), our agent | Haiku 5.5 | 60/60 | 3.4 s | 5.0 s | 7.7k | $0.0010 | 3 of 8 |
 | 🟡 | **Codex ACP** | ACP (`codex-acp`) | GPT-5.6 Luna | 60/60 | 2.7 s | 4.4 s | 21.2k | n/a² | 4 of 10 |
 | 🟡 | **Claude ACP** | ACP (`claude-agent-acp`) | Haiku | 60/60 | 5.8 s | 7.6 s | 26.6k | $0.0045 | 0 of 0 |
+| 🟡 | **OpenCode ACP** | ACP (`opencode acp`) | GPT-5.6 Luna | 60/60 | 3.0 s | 4.9 s | 10.5k | $0.0026 | 3 of 13 |
+| 🟡 | **OpenCode ACP** | ACP (`opencode acp`) | Haiku 4.5 | 60/60 | 12.8 s | 18.8 s | 13.9k | $0.0224 | 1 of 6 |
 | ❌ | **Junie** | `junie --task` | junie-lite | 2/60 | 8.1 s | 13.1 s | 36.9k | $0.0062 | 0 of 0 |
 | ❌ | **Junie ACP** | ACP (`junie --acp`) | GPT-5.6 Luna (JetBrains AI) | 0/60 | – | – | – | – | – |
 
@@ -32,12 +37,17 @@ The reports with examples: [the agents](REPORT.md) ([HTML](results/report.html))
 Median time per message, from the process start to the message:
 
 ```text
-Claude Code Haiku 4.5   ████████████ 2.4 s
-Claude Code Haiku 5.5   ██████████ 2.1 s
-Codex GPT-5.6 Luna      ████████████ 2.4 s
-Codex ACP GPT-5.6 Luna  █████████████ 2.7 s
-Claude ACP Haiku        ████████████████████████████ 5.8 s
-Junie junie-lite        ████████████████████████████████████████ 8.1 s
+Claude Code Haiku 4.5           ███████ 2.4 s
+Claude Code Haiku 5.5           ███████ 2.1 s
+Codex GPT-5.6 Luna              ████████ 2.4 s
+OpenCode ACP lean GPT-5.6 Luna  █████████ 2.9 s
+OpenCode ACP lean Haiku 4.5     ████████████ 3.7 s
+OpenCode ACP lean Haiku 5.5     ██████████ 3.4 s
+Codex ACP GPT-5.6 Luna          ████████ 2.7 s
+Claude ACP Haiku                ██████████████████ 5.8 s
+OpenCode ACP GPT-5.6 Luna       █████████ 3.0 s
+OpenCode ACP Haiku 4.5          ████████████████████████████████████████ 12.8 s
+Junie junie-lite                █████████████████████████ 8.1 s
 ```
 
 The full report with examples: [REPORT.md](REPORT.md).
@@ -175,12 +185,43 @@ The full list of keys is in [`scripts/codex.sh`](scripts/codex.sh). For streamin
 [`src/acp.ts`](src/acp.ts) is a minimal ACP client: `initialize`, `session/new`, a model switch, one `session/prompt`, and the text of the `agent_message_chunk` updates.
 
 - **ACP has no system prompt.** The instructions go first in the prompt text.
-- **ACP has no switches to cut the context.** Every call carries the full agent setup: its system prompt, tools, hooks, and user settings.
-- **Set the model explicitly.** Without a switch the session uses the default model of the user. In the test that was Opus: $0.15 for a one-word answer.
-- Codex ACP switches the model with `session/set_model`. It also sends a `model` config option, but that option takes other values. Junie switches the model with `session/set_config_option` (`configId: "model"`).
+- **ACP has no switches to cut the context.** Every call carries the full agent setup: its system prompt, tools, hooks, and user settings. OpenCode is the exception, see [OpenCode ACP](#opencode-acp).
+- **Set the model explicitly.** Without a switch the session uses the default model of the user. In the test that was Opus: $0.15 for a one-word answer. OpenCode uses `opencode/big-pickle`, a free model of OpenCode Zen.
+- Codex ACP switches the model with `session/set_model`. It also sends a `model` config option, but that option takes other values. Junie switches the model with `session/set_config_option` (`configId: "model"`). OpenCode takes `model`, `effort`, and `mode` as config options.
 - **Junie ACP needs an IDE.** Outside a JetBrains IDE every prompt ends at once with `stopReason: cancelled`: the JetBrains AI authorization fails. The IDE gives Junie its credentials when it starts the agent.
 
-The adapters come from `PATH`. `CODEX_ACP_BIN`, `CLAUDE_ACP_BIN`, and `JUNIE_BIN` override the paths.
+The adapters come from `PATH`. `CODEX_ACP_BIN`, `CLAUDE_ACP_BIN`, `JUNIE_BIN`, and `OPENCODE_BIN` override the paths.
+
+### OpenCode ACP
+
+`opencode acp` reads its config from the environment, so the client that starts it can give it our agent: our system prompt, no tools, and no title call. The other ACP agents have no such way. The setup is [`opencodeSetup`](src/agents.ts):
+
+```sh
+OPENCODE_CONFIG_CONTENT='{"agent":{"commit":{"mode":"primary","prompt":"<prompts/system.md>","permission":{"*":"deny"}},"title":{"disable":true}}}' \
+OPENCODE_DISABLE_CLAUDE_CODE=1 OPENCODE_DB=:memory: opencode acp
+```
+
+Then `session/new` and three `session/set_config_option` calls, in this order: `model` (`anthropic/claude-haiku-5-5`), `mode` (`commit`), and `effort` (`low`). The prompt holds only the context and the diff.
+
+| Setting | Why |
+|---|---|
+| `prompt` of the agent | Replaces the OpenCode system prompt (10k characters). OpenCode still adds the model name and an `<env>` block: the working directory, git or not, the platform, and the date. Together 390 characters. |
+| `permission: {"*": "deny"}` | Removes all tools from the request, and the list of skills from the system prompt. `tools: {"*": false}` does the same, but is deprecated. |
+| `agent.title.disable` | Without it, every session makes one more call for its title: the whole prompt once more to a small model, Haiku 5.5 or gpt-5.4-nano. The ACP usage does not count this call. |
+| `mode`: `commit` | Selects our agent. The default is `build`, the coding agent with 9 or 10 tools. |
+| `effort` | A variant of the model. Without it ACP takes the first variant: Haiku 4.5 thinks with a 16k budget, 12.8 s per message. `default` sends no thinking options. The values differ by model: `high`, `max`, `default` for Haiku 4.5, `low` to `max` for Haiku 5.5, `none` to `max` for Luna. |
+| `model` | Without it the session uses `opencode/big-pickle`, a free model of OpenCode Zen, and the diff goes to opencode.ai. |
+| `OPENCODE_DB=:memory:` | Otherwise every message adds a session to the history of the user in `~/.local/share/opencode/opencode.db`. The time is the same. |
+| `OPENCODE_DISABLE_CLAUDE_CODE=1` | Otherwise `~/.claude/CLAUDE.md` goes into the system prompt, also of our agent. |
+
+#### Pitfalls
+
+1. **The ChatGPT login of OpenCode takes the OpenAI requests.** They go to chatgpt.com, and the `baseURL` of the `openai` provider has no effect. The benchmark set `OPENCODE_AUTH_CONTENT={}`, an empty auth store, and sent both providers through the same proxy as Claude Code and Codex.
+2. **A global `~/.config/opencode/AGENTS.md` goes into every system prompt,** also of our agent, and no switch turns it off. So do the `instructions` of the user config. The test machine has neither.
+3. **The plugins of the user can change the request.** `OPENCODE_PURE=1` skips them, but also the plugins that log in to a provider.
+4. **The start takes 1.0 s:** spawn, `initialize`, and `session/new`. It explains the gap to the CLIs: in a control run on the same day, per commit, OpenCode took 0.4 s more than `codex exec` with Luna and 1.2 s more than `claude -p` with Haiku 4.5. No switch shortens the start: `OPENCODE_PURE`, `OPENCODE_DISABLE_MODELS_FETCH`, `OPENCODE_DISABLE_AUTOUPDATE`, `OPENCODE_FAST_BOOT`, and the database in memory gave the same time.
+5. **The usage.** The `session/prompt` response holds the last model call: `inputTokens` without the cached tokens, `outputTokens` without the reasoning. `usage_update` holds the context size and the cost of the session. OpenCode computes the cost from its model catalog, and for Haiku 4.5 and 5.5 the catalog has the Anthropic prices.
+6. **The default agent can ask instead of answering.** With the `build` agent, Haiku 4.5 once asked for the branch name instead of writing the message.
 
 ## Junie CLI
 
@@ -192,7 +233,7 @@ The adapters come from `PATH`. `CODEX_ACP_BIN`, `CLAUDE_ACP_BIN`, and `JUNIE_BIN
 
 ## Issue ids
 
-The models ignore the rule in the prompt. In the benchmark the models wrote an issue id 37 times, and 11 of them were wrong: an id of an unrelated recent commit, or an invented one. [`dropUntrustedIssueIds`](src/clean.ts) keeps in the summary line only the ids that the branch name contains. The IDE can add the right id from the branch itself.
+The models ignore the rule in the prompt. In the benchmark the models wrote an issue id 90 times, and 25 of them were wrong: an id of an unrelated recent commit, or an invented one. [`dropUntrustedIssueIds`](src/clean.ts) keeps in the summary line only the ids that the branch name contains. The IDE can add the right id from the branch itself.
 
 ## The diff budget
 
@@ -267,9 +308,14 @@ bun report.ts
 bun bench.ts --name bench-files --configs 'claude:haiku:safe,claude:haiku:safe+files,codex:gpt-5.6-luna:lean:low,codex:gpt-5.6-luna:lean:low+files'
 bun judge.ts results/bench-files.jsonl
 bun report-files.ts
+
+OPENCODE_CONFIG=opencode-proxy.json OPENCODE_AUTH_CONTENT='{}' bun bench.ts --name bench-agents-opencode \
+  --configs 'opencode-acp:openai/gpt-5.6-luna:lean:low,opencode-acp:anthropic/claude-haiku-4-5:lean:default,opencode-acp:openai/gpt-5.6-luna:naive:low'
 ```
 
 - A config is `agent:model:variant[:effort][+schema][+files]`, or `agent:model` for `junie` and the ACP agents. The variants are in [`src/agents.ts`](src/agents.ts).
+- OpenCode ACP takes a variant too: `opencode-acp:<provider>/<model>:<naive|lean>[:effort]`. The runner passes `OPENCODE_CONFIG`, a config file with the providers, for example with the `baseURL` of a proxy, and `OPENCODE_AUTH_CONTENT` from its environment to OpenCode.
+- The agents benchmark used the first 30 commits of each repository, the files benchmark all 70.
 - The tasks are in [`tasks.json`](tasks.json): a repository, an optional subdirectory, and a commit hash or subject. `tasks.local.json` overrides the file and is not tracked.
 - The prompt of a task uses only the history before its commit, so the real message does not leak.
 - `+files` runs the agent in a clone under `$TMPDIR/cmsg-sandbox`: HEAD at the parent of the commit, the changes staged, no refs, and no reflog. The clone borrows the objects of the repository and stays for the next run. The first checkout of intellij-community takes about a minute.
@@ -309,6 +355,8 @@ bun report-files.ts
 - Old CLI versions, which can lack `--safe-mode`, `--tools`, or `--effort`.
 - The files mode with Junie and the ACP agents, in a working copy with fsmonitor, and with a selection in the commit dialog that is not the git index.
 - The diff mode with a higher effort for Haiku 5.5: in the files mode it thinks more often, and that can be the reason for its better messages.
+- OpenCode `run`, OpenCode with its ChatGPT login or a Zen model, and one `opencode acp` process for many messages: it would pay the start of 1.0 s once.
+- A global `AGENTS.md` and plugins of the user with OpenCode.
 - A diff budget that gives the unused share of small files to the large ones, and that counts the headers of omitted files.
 
 ## License

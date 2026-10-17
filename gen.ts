@@ -47,7 +47,7 @@ if (args["dry-run"]) {
 
 const res = await runAgent({
   agent,
-  model: args.model ?? (agent === "claude" ? "claude-haiku-5-5" : "gpt-5.6-luna"),
+  model: args.model ?? (agent === "claude" ? "claude-haiku-5-5" : agent === "opencode-acp" ? "openai/gpt-5.6-luna" : "gpt-5.6-luna"),
   variant: (args.variant ?? (agent === "claude" ? "safe" : "lean")) as Variant,
   // Haiku 5.5 thinks less at the low effort. Claude Code 2.1.291 cannot turn its thinking off: it does not know the model.
   effort: args.effort ?? "low",

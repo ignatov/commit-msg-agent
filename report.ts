@@ -7,8 +7,11 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs"
 const inputs = process.argv.length > 2 ? process.argv.slice(2) :
   readdirSync("results").filter(it => /^bench-agents.*\.jsonl$/.test(it)).map(it => `results/${it}`)
 const rows: any[] = inputs.flatMap(file => readFileSync(file, "utf8").split("\n").filter(Boolean).map(it => JSON.parse(it)))
-// The date of the commit with the data: a rebuild of the report on another day keeps it. New data has no commit yet.
-const date = (await $`git log -1 --format=%cs -- ${inputs}`.nothrow().text()).trim() || new Date().toISOString().slice(0, 10)
+// The date of the commit with each data file: a rebuild of the report on another day keeps it. New data has no commit yet.
+const today = new Date().toISOString().slice(0, 10)
+const dates = [...new Set(await Promise.all(inputs.map(async file => (await $`git log -1 --format=%cs -- ${file}`.nothrow().text()).trim() || today)))].sort()
+const date = dates.length > 1 ? `${dates.slice(0, -1).join(", ")} and ${dates.at(-1)}` : dates[0]
+const VERSIONS = "Claude Code 2.1.291, codex-cli 0.154.0, codex-acp 2.2.2, claude-agent-acp 0.89.1, Junie 26.10.5, OpenCode 1.19.3, macOS"
 
 interface AgentInfo {
   config: string
@@ -19,10 +22,17 @@ interface AgentInfo {
   verdictText: string
   /** The notes can quote the measured numbers. */
   notes: () => string[]
+  /** The model calls per message, when the agent does not report them. */
+  calls?: number
 }
 
 const CLAUDE = "claude:haiku:safe"
 const CODEX = "codex:gpt-5.6-luna:lean:low"
+// Claude Code 2.1.291 does not know the price of Haiku 5.5. OpenCode takes the price from its model catalog.
+const CLAUDE_HAIKU_55 = "claude:claude-haiku-5-5:safe:low"
+const OPENCODE_LUNA = "opencode-acp:openai/gpt-5.6-luna:lean:low"
+const OPENCODE_HAIKU = "opencode-acp:anthropic/claude-haiku-4-5:lean:default"
+const OPENCODE_NAIVE_HAIKU = "opencode-acp:anthropic/claude-haiku-4-5:naive"
 const x = (a: number | undefined, b: number | undefined) => (a && b ? `${(a / b).toFixed(1)}×` : "?")
 
 const AGENTS: AgentInfo[] = [
@@ -32,7 +42,7 @@ const AGENTS: AgentInfo[] = [
     notes: () => ["The cheapest per message.", "Needs four switches against user settings, see the README."],
   },
   {
-    config: "claude:claude-haiku-5-5:safe:low", agent: "Claude Code", model: "Haiku 5.5", how: "<code>claude -p</code>",
+    config: CLAUDE_HAIKU_55, agent: "Claude Code", model: "Haiku 5.5", how: "<code>claude -p</code>",
     verdict: "good", verdictText: "Ready",
     notes: () => ["Explains why a change was made more often than the other models.", "Claude Code 2.1.291 does not know this model: the reported cost is not reliable."],
   },
@@ -40,6 +50,25 @@ const AGENTS: AgentInfo[] = [
     config: CODEX, agent: "Codex", model: "GPT-5.6 Luna", how: "<code>codex exec</code>",
     verdict: "good", verdictText: "Ready",
     notes: () => ["Short and exact messages, rarely a body.", "The CLI reports tokens, not a price."],
+  },
+  {
+    config: OPENCODE_LUNA, agent: "OpenCode ACP lean", model: "GPT-5.6 Luna", how: "ACP (<code>opencode acp</code>), our agent",
+    verdict: "good", verdictText: "Ready",
+    notes: () => ["The only ACP agent that takes a config from its client: our system prompt and no tools in <code>OPENCODE_CONFIG_CONTENT</code>.",
+      `${seconds(stats(OPENCODE_LUNA).start)} of the time is the start of the process: spawn, <code>initialize</code>, and <code>session/new</code>.`,
+      `${x(stats(OPENCODE_LUNA).input, stats(CODEX).input)} the input tokens of <code>codex exec</code>.`],
+  },
+  {
+    config: OPENCODE_HAIKU, agent: "OpenCode ACP lean", model: "Haiku 4.5", how: "ACP (<code>opencode acp</code>), our agent",
+    verdict: "good", verdictText: "Ready",
+    notes: () => ["Needs the effort <code>default</code>: without it ACP takes the first variant of the model, and Haiku 4.5 thinks with a 16k budget.",
+      `${x(stats(OPENCODE_HAIKU).p50, stats(CLAUDE).p50)} the time of <code>claude -p</code>, most of it the start of the process.`],
+  },
+  {
+    config: "opencode-acp:anthropic/claude-haiku-5-5:lean:low", agent: "OpenCode ACP lean", model: "Haiku 5.5", how: "ACP (<code>opencode acp</code>), our agent",
+    verdict: "good", verdictText: "Ready",
+    notes: () => [`OpenCode knows the price of Haiku 5.5: $${stats("opencode-acp:anthropic/claude-haiku-5-5:lean:low").cost?.toFixed(4)} per message, ` +
+      `against $${stats(OPENCODE_HAIKU).cost?.toFixed(4)} for Haiku 4.5.`],
   },
   {
     config: "codex-acp:gpt-5.6-luna[low]", agent: "Codex ACP", model: "GPT-5.6 Luna", how: "ACP (<code>codex-acp</code>)",
@@ -53,6 +82,20 @@ const AGENTS: AgentInfo[] = [
     notes: () => ["ACP takes none of the <code>claude -p</code> switches: the full Claude Code prompt, tools, hooks, and user settings come with every call.",
       `${x(stats("claude-acp:haiku").input, stats(CLAUDE).input)} the input tokens and ${x(stats("claude-acp:haiku").p50, stats(CLAUDE).p50)} the time of <code>claude -p</code>.`,
       "Without a model switch the session uses the default model of the user, Opus in this test: $0.15 for one word."],
+  },
+  {
+    config: "opencode-acp:openai/gpt-5.6-luna:naive:low", agent: "OpenCode ACP", model: "GPT-5.6 Luna", how: "ACP (<code>opencode acp</code>)",
+    verdict: "ok", verdictText: "Works, costs more", calls: 2,
+    notes: () => [`The default <code>build</code> agent: the OpenCode system prompt and 9 tools, ${x(stats("opencode-acp:openai/gpt-5.6-luna:naive:low").input, stats(OPENCODE_LUNA).input)} the input tokens of our agent.`,
+      "One more call per message: the session title. It sends the whole prompt to gpt-5.4-nano once more, and the ACP usage does not count it.",
+      "Without a model switch the session uses <code>opencode/big-pickle</code>, a free model of OpenCode Zen: the diff goes to opencode.ai."],
+  },
+  {
+    config: OPENCODE_NAIVE_HAIKU, agent: "OpenCode ACP", model: "Haiku 4.5", how: "ACP (<code>opencode acp</code>)",
+    verdict: "ok", verdictText: "Works, slow", calls: 2,
+    notes: () => [`ACP takes the first effort variant of the model: Haiku 4.5 thinks with a 16k budget, ${x(stats(OPENCODE_NAIVE_HAIKU).p50, stats(OPENCODE_HAIKU).p50)} the time of our agent.`,
+      "The title call sends the whole prompt to Haiku 5.5 once more.",
+      "One answer asked the user for the branch name instead of writing the message (intellij-community-15): the default agent is made for a conversation."],
   },
   {
     config: "junie:junie-lite", agent: "Junie", model: "junie-lite", how: "<code>junie --task</code>",
@@ -84,8 +127,9 @@ function stats(config: string) {
   const ms = good.map(it => it.wallMs).sort((a, b) => a - b)
   const mean = (pick: (row: any) => number) => (good.length ? good.reduce((sum, row) => sum + pick(row), 0) / good.length : undefined)
   const costs = good.filter(it => it.costUsd !== undefined && it.costUsd !== null)
+  const startMs = good.filter(it => it.startMs !== undefined).map(it => it.startMs).sort((a, b) => a - b)
   return {
-    runs: all.length, ok: ok.length, measured: good.length, p50: pct(ms, 0.5), p90: pct(ms, 0.9),
+    runs: all.length, ok: ok.length, measured: good.length, p50: pct(ms, 0.5), p90: pct(ms, 0.9), start: pct(startMs, 0.5),
     input: mean(it => it.usage.input), output: mean(it => it.usage.output),
     cost: costs.length ? costs.reduce((sum, row) => sum + row.costUsd, 0) / costs.length : undefined,
     calls: mean(it => it.llmCalls ?? 1),
@@ -99,7 +143,7 @@ const kb = (chars: number) => `${(chars / 1000).toFixed(1)} KB`
 const runsPerTask = Math.max(...rows.map(it => it.run)) + 1
 const summaryRows = AGENTS.map(info => {
   const s = stats(info.config)
-  const cost = info.config.includes("haiku-5-5") ? "unreliable" : s.cost === undefined ? "not reported" : `$${s.cost.toFixed(4)}`
+  const cost = info.config === CLAUDE_HAIKU_55 ? "unreliable" : s.cost === undefined ? "not reported" : `$${s.cost.toFixed(4)}`
   return `<tr>
     <td><b>${info.agent}</b><div class="sub">${info.how}</div></td>
     <td>${esc(info.model)}</td>
@@ -108,7 +152,7 @@ const summaryRows = AGENTS.map(info => {
     <td class="num">${s.measured ? seconds(s.p50) : "–"}</td>
     <td class="num">${s.measured ? seconds(s.p90) : "–"}</td>
     <td class="num">${s.input === undefined ? "–" : Math.round(s.input).toLocaleString("en")}</td>
-    <td class="num">${s.measured ? (s.calls ?? 1).toFixed(0) : "–"}</td>
+    <td class="num">${s.measured ? (info.calls ?? s.calls ?? 1).toFixed(0) : "–"}</td>
     <td class="num">${s.measured ? cost : "–"}</td>
     <td><ul>${info.notes().map(it => `<li>${it}</li>`).join("")}</ul></td>
   </tr>`
@@ -164,12 +208,13 @@ const html = `<!doctype html>
   code { font-size: 12px; }
 </style></head><body>
 <h1>Commit message generation through a terminal agent</h1>
-<p class="lead">${date}. ${commits.length} real commits of <a href="https://github.com/openai/codex">openai/codex</a> and <a href="https://github.com/JetBrains/intellij-community">JetBrains/intellij-community</a>, diff from ${kb(Math.min(...diffSizes))} to ${kb(Math.max(...diffSizes))}, ${runsPerTask} runs per commit and agent. Cheap models only. Claude Code 2.1.291, codex-cli 0.154.0, codex-acp 2.2.2, claude-agent-acp 0.89.1, Junie 26.10.5, macOS.</p>
+<p class="lead">${date}. ${commits.length} real commits of <a href="https://github.com/openai/codex">openai/codex</a> and <a href="https://github.com/JetBrains/intellij-community">JetBrains/intellij-community</a>, diff from ${kb(Math.min(...diffSizes))} to ${kb(Math.max(...diffSizes))}, ${runsPerTask} runs per commit and agent. Cheap models only. ${VERSIONS}.</p>
 
 <h2>Verdict</h2>
 <div class="cards">
   <div class="card"><b>Use the CLI mode, not ACP</b><code>claude -p</code> and <code>codex exec</code> give the message in 2–3 seconds for less than 2 cents. The IDE collects the diff and gives it to the agent; the agent only writes text.</div>
   <div class="card"><b>Claude Code and Codex are ready</b>All runs succeeded and the output was clean text. Haiku 4.5 is the fastest; Haiku 5.5 writes the best explanations; Luna writes short and exact messages.</div>
+  <div class="card"><b>OpenCode works over ACP</b>The client starts <code>opencode acp</code> with our agent in the environment: our system prompt, no tools, no title call. ${seconds(stats(OPENCODE_LUNA).p50)} per message with Luna, ${seconds(stats(OPENCODE_LUNA).start)} of it the start of the process.</div>
   <div class="card"><b>Junie is not suitable today</b>Its CLI returns a task report instead of the message and makes several model calls. Its ACP mode needs the IDE for authorization.</div>
   <div class="card"><b>Do not trust issue ids from the model</b>${allIds.wrong} of the ${allIds.written} ids that the models wrote were wrong. The IDE takes the id from the branch name only.</div>
 </div>
@@ -200,6 +245,7 @@ ${exampleRows}
   <li>Windows and Linux.</li>
   <li>A Claude subscription login; the tests used an API key helper.</li>
   <li>Junie with a JetBrains AI subscription, and Junie ACP inside the running IDE.</li>
+  <li>OpenCode <code>run</code>, OpenCode with its ChatGPT login, and one <code>opencode acp</code> process for many messages.</li>
 </ul>
 </body></html>
 `
@@ -217,7 +263,7 @@ function agentTable(): string {
   const out = ["| | Agent | Mode | Model | Success | Median | p90 | Input tokens | Cost per message | Wrong issue ids |", "|---|---|---|---|---:|---:|---:|---:|---:|---:|"]
   for (const info of AGENTS) {
     const s = stats(info.config)
-    const cost = info.config.includes("haiku-5-5") ? "n/a¹" : s.cost === undefined ? "n/a²" : `$${s.cost.toFixed(4)}`
+    const cost = info.config === CLAUDE_HAIKU_55 ? "n/a¹" : s.cost === undefined ? "n/a²" : `$${s.cost.toFixed(4)}`
     out.push(`| ${STATUS[info.verdict]} | **${info.agent}** | ${md(info.how)} | ${info.model} | ${s.ok}/${s.runs} | ` +
       `${s.measured ? seconds(s.p50) : "–"} | ${s.measured ? seconds(s.p90) : "–"} | ` +
       `${s.input === undefined ? "–" : `${(s.input / 1000).toFixed(1)}k`} | ${s.measured ? cost : "–"} | ` +
@@ -269,6 +315,7 @@ ${summary}
 - ✅ **Use the CLI mode.** \`claude -p\` and \`codex exec\` return the message in 2–3 s. The IDE collects the diff; the agent only writes text.
 - ✅ **Claude Code and Codex are ready.** Every run returned clean text: no quotes, no fences, no preamble.
 - 🟡 **ACP works, but costs more.** ACP has no system prompt and no switches to cut the context, so every call carries the full agent setup.
+- ✅ **OpenCode is the exception.** The client starts \`opencode acp\` with our agent in \`OPENCODE_CONFIG_CONTENT\`: our system prompt, no tools, no title call. A message then takes ${seconds(stats(OPENCODE_LUNA).p50)} with Luna, ${seconds(stats(OPENCODE_LUNA).start)} of it the start of the process.
 - ❌ **Junie is not suitable today.** Its CLI returns a task report instead of the message. Its ACP mode needs a JetBrains IDE for the login.
 - ⚠️ **Do not trust issue ids from the model.** ${allIds.wrong} of the ${allIds.written} ids that the models wrote were wrong: an id of an unrelated commit, or an invented one. Keep only the ids from the branch name.
 
@@ -291,7 +338,7 @@ ${examples(AGENTS, commits)}
 
 ## Versions
 
-Claude Code 2.1.291, codex-cli 0.154.0, codex-acp 2.2.2, claude-agent-acp 0.89.1, Junie 26.10.5, macOS. Raw data: ${inputs.map(it => `[\`${it}\`](${it})`).join(", ")}.
+${VERSIONS}. Raw data: ${inputs.map(it => `[\`${it}\`](${it})`).join(", ")}.
 `
 writeFileSync("REPORT.md", report)
 
