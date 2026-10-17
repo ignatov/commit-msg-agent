@@ -30,6 +30,12 @@ export function dropUntrustedIssueIds(message: string, branch: string | undefine
   return { text: [fixed, ...body].join("\n"), dropped }
 }
 
+/** The text of the last `<tag>` block, or the whole text when it has none. */
+export function lastTaggedBlock(text: string, tag: string): string {
+  const blocks = [...text.matchAll(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "g"))]
+  return blocks.length ? blocks[blocks.length - 1][1] : text
+}
+
 /** The text of the last fenced code block, or the whole text when it has none. */
 export function lastFencedBlock(text: string): string {
   const blocks = [...text.matchAll(/```[\w-]*\n([\s\S]*?)\n```/g)]

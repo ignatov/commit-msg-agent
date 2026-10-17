@@ -1,8 +1,8 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { runAcp } from "./acp"
-import { cleanMessage, joinStructured, lastFencedBlock, MESSAGE_SCHEMA, type StructuredMessage } from "./clean"
+import { cleanMessage, joinStructured, lastFencedBlock, lastTaggedBlock, MESSAGE_SCHEMA, type StructuredMessage } from "./clean"
 
 export type AgentName = "claude" | "codex" | "junie" | "codex-acp" | "claude-acp" | "junie-acp"
 
@@ -21,6 +21,11 @@ export interface RunSpec {
   effort?: string
   /** Ask for `{subject, body}` JSON through the native structured output of the CLI. */
   schema?: boolean
+  /**
+   * The files mode: the prompt has no diff, and the agent reads the changes in `cwd` with read-only tools.
+   * Claude Code gets Bash, Read, Grep, and Glob. Codex gets its shell in the read-only sandbox.
+   */
+  files?: boolean
   /** More CLI arguments, for one-off experiments. */
   extraArgs?: string[]
   /** More environment variables for the child process. */
@@ -56,11 +61,19 @@ export interface RunResult {
   startMs?: number
   /** Junie only: the number of model calls in one task. */
   llmCalls?: number
+  /** The files mode only: the commands and the tool calls of the agent, in order. */
+  toolCalls?: string[]
+  /** Claude Code only: the tool calls that its permission mode denied. */
+  deniedCalls?: string[]
+  /** Claude Code only: the time of the API requests. The rest of `wallMs` is the start of the CLI and the tool calls. */
+  apiMs?: number
 }
 
 const ZERO_USAGE: Usage = { input: 0, cachedInput: 0, cacheWrite: 0, output: 0, reasoning: 0 }
 
 export async function runAgent(spec: RunSpec, system: string, user: string): Promise<RunResult> {
+  if (spec.files && !spec.cwd) throw new Error("the files mode needs cwd: the agent reads the changes there")
+  if (spec.files && !["claude", "codex"].includes(spec.agent)) throw new Error(`no files mode for ${spec.agent}`)
   switch (spec.agent) {
     case "claude": return runClaude(spec, system, user)
     case "codex": return runCodex(spec, system, user)
@@ -135,7 +148,13 @@ async function runJunie(spec: RunSpec, system: string, user: string): Promise<Ru
   }
 }
 
-const CLAUDE_LEAN = ["--tools", "", "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands"]
+const CLAUDE_LEAN = ["--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands"]
+
+/**
+ * The tools of the files mode. `dontAsk` runs the read-only commands and denies the rest, for example `touch` and `git commit`.
+ * The settings of the repository are skipped: their allow rules could permit writes. The user settings stay, because they hold the auth.
+ */
+const CLAUDE_FILES_TOOLS = ["--tools", "Bash,Read,Grep,Glob", "--permission-mode", "dontAsk", "--setting-sources", "user"]
 
 /**
  * The user settings still apply in `--safe-mode`, and two of them break a one-shot call:
@@ -145,8 +164,12 @@ const CLAUDE_LEAN = ["--tools", "", "--no-session-persistence", "--strict-mcp-co
  */
 const CLAUDE_ONE_SHOT_SETTINGS = { alwaysThinkingEnabled: false, advisorModel: "", disableAllHooks: true }
 
+/** With the Bash tool, Claude Code tells the model to end every commit message with its `Co-Authored-By` trailer. */
+const CLAUDE_NO_ATTRIBUTION = { attribution: { commit: "", pr: "" } }
+
 async function runClaude(spec: RunSpec, system: string, user: string): Promise<RunResult> {
-  const argv = ["claude", "-p", "--model", spec.model, "--output-format", "json"]
+  // The stream shows the tool calls of the files mode. Its `result` event is the same object as the JSON output.
+  const argv = ["claude", "-p", "--model", spec.model, ...(spec.files ? ["--output-format", "stream-json", "--verbose"] : ["--output-format", "json"])]
   if (spec.effort) argv.push("--effort", spec.effort)
   let stdin = user
   if (spec.variant === "naive") {
@@ -155,26 +178,41 @@ async function runClaude(spec: RunSpec, system: string, user: string): Promise<R
     stdin = `${system}\n\n${user}`
   }
   else {
-    argv.push("--system-prompt", system, ...CLAUDE_LEAN)
+    argv.push("--system-prompt", system, ...CLAUDE_LEAN, ...(spec.files ? CLAUDE_FILES_TOOLS : ["--tools", ""]))
     if (spec.variant === "safe") argv.push("--safe-mode")
     // `--bare` reads no user settings, so it gets the auth from them explicitly. Only one `--settings` flag is allowed.
-    const settings = spec.variant === "bare" ? { ...CLAUDE_ONE_SHOT_SETTINGS, ...bareSettings() } : CLAUDE_ONE_SHOT_SETTINGS
+    const settings = { ...CLAUDE_ONE_SHOT_SETTINGS, ...(spec.files ? CLAUDE_NO_ATTRIBUTION : {}), ...(spec.variant === "bare" ? bareSettings() : {}) }
     if (spec.variant === "bare") argv.push("--bare")
     if (!spec.extraArgs?.includes("--settings")) argv.push("--settings", JSON.stringify(settings))
   }
   if (spec.schema) argv.push("--json-schema", JSON.stringify(MESSAGE_SCHEMA))
   argv.push(...(spec.extraArgs ?? []))
 
-  const proc = await spawn(argv, stdin, workDir(spec), spec.timeoutMs, spec.extraEnv)
+  const cwd = workDir(spec)
+  const proc = await spawn(argv, stdin, cwd, spec.timeoutMs, spec.extraEnv)
   const base = { exitCode: proc.exitCode, wallMs: proc.wallMs, argv }
   let res: any
+  const toolCalls: string[] = []
   try {
-    res = JSON.parse(proc.stdout)
+    if (!spec.files) res = JSON.parse(proc.stdout)
+    else {
+      for (const line of proc.stdout.split("\n")) {
+        if (!line.startsWith("{")) continue
+        const event = JSON.parse(line)
+        if (event.type === "result") res = event
+        else if (event.type === "assistant") {
+          for (const block of event.message?.content ?? []) if (block.type === "tool_use") toolCalls.push(describeToolCall(block.name, block.input, cwd))
+        }
+      }
+      if (!res) throw new Error("no result event")
+    }
   }
   catch {
     return { ...base, ok: false, text: "", rawText: "", usage: ZERO_USAGE, error: `no JSON on stdout: ${tail(proc.stdout || proc.stderr)}` }
   }
   const rawText = res.structured_output ? joinStructured(res.structured_output as StructuredMessage) : String(res.result ?? "")
+  // The files mode asks for the message between tags: after many tool calls a model sometimes adds its notes around it.
+  const message = spec.files ? lastTaggedBlock(rawText, "commit_message") : rawText
   // Anthropic counts the cache reads and the cache writes apart from `input_tokens`.
   const cachedInput = res.usage?.cache_read_input_tokens ?? 0
   const cacheWrite = res.usage?.cache_creation_input_tokens ?? 0
@@ -184,9 +222,19 @@ async function runClaude(spec: RunSpec, system: string, user: string): Promise<R
   }
   const ok = proc.exitCode === 0 && !res.is_error && res.subtype === "success"
   return {
-    ...base, ok, rawText, text: cleanMessage(rawText), costUsd: res.total_cost_usd, usage,
+    ...base, ok, rawText, text: cleanMessage(message), costUsd: res.total_cost_usd, usage, toolCalls: spec.files ? toolCalls : undefined, apiMs: res.duration_api_ms,
+    deniedCalls: res.permission_denials?.map((it: any) => describeToolCall(it.tool_name, it.tool_input, cwd)),
     error: ok ? undefined : `${res.subtype}: ${tail(String(res.result ?? proc.stderr))}`,
   }
+}
+
+/** A short form of a Claude Code tool call: the command of Bash, the path or the pattern of the file tools. */
+function describeToolCall(name: string, input: any, cwd: string): string {
+  const text = name === "Bash" ? String(input?.command) : `${name} ${input?.file_path ?? input?.pattern ?? JSON.stringify(input)}`
+  // The model sees the real path of the working directory: /tmp is /private/tmp on macOS.
+  // Claude Code saves a long command output under ~/.claude/projects, and the model reads it from there.
+  return text.replace(/^cd \S+ && /, "").replaceAll(`${realpathSync(cwd)}/`, "").replaceAll(`${cwd}/`, "")
+    .replace(/\S*\/\.claude\/projects\/[^/\s]+\/[^/\s]+\/tool-results\//g, "~/.claude/projects/…/tool-results/")
 }
 
 function bareSettings(): object {
@@ -209,14 +257,15 @@ const CODEX_LEAN_CONFIG = [
   "features.personality=false",
   // Plugins add their own MCP servers, so `mcp_servers={}` alone does not remove them.
   "mcp_servers={}",
-  "features.shell_tool=false",
-  "features.unified_exec=false",
   "features.view_image=false",
   "features.image_generation=false",
   "features.browser_use=false",
   "features.computer_use=false",
   "web_search=\"disabled\"",
 ]
+
+/** The files mode keeps the shell: the commands run in the read-only sandbox. */
+const CODEX_NO_SHELL = ["features.shell_tool=false", "features.unified_exec=false"]
 
 async function runCodex(spec: RunSpec, system: string, user: string): Promise<RunResult> {
   const scratch = mkdtempSync(join(tmpdir(), "cmsg-codex-"))
@@ -227,7 +276,7 @@ async function runCodex(spec: RunSpec, system: string, user: string): Promise<Ru
   else {
     const systemFile = join(scratch, "system.md")
     writeFileSync(systemFile, system)
-    for (const it of CODEX_LEAN_CONFIG) argv.push("-c", it)
+    for (const it of [...CODEX_LEAN_CONFIG, ...(spec.files ? [] : CODEX_NO_SHELL)]) argv.push("-c", it)
     argv.push("-c", `model_instructions_file="${systemFile}"`)
   }
   if (spec.schema) {
@@ -241,10 +290,14 @@ async function runCodex(spec: RunSpec, system: string, user: string): Promise<Ru
   let rawText = ""
   let usage = ZERO_USAGE
   let error: string | undefined
+  const toolCalls: string[] = []
   for (const line of proc.stdout.split("\n")) {
     if (!line.startsWith("{")) continue
     const event = JSON.parse(line)
     if (event.type === "item.completed" && event.item?.type === "agent_message") rawText = event.item.text
+    // Codex wraps every command into a login shell: /bin/zsh -lc '<command>'.
+    else if (event.type === "item.completed" && event.item?.type === "command_execution") toolCalls.push(String(event.item.command).replace(/^\S+ -lc '([\s\S]*)'$/, "$1"))
+    else if (event.type === "item.completed" && !["reasoning", "error"].includes(event.item?.type)) toolCalls.push(String(event.item?.type))
     else if (event.type === "turn.completed") {
       const u = event.usage ?? {}
       usage = {
@@ -266,7 +319,11 @@ async function runCodex(spec: RunSpec, system: string, user: string): Promise<Ru
   }
   const ok = proc.exitCode === 0 && !error && rawText !== ""
   if (!ok) error ??= `exit ${proc.exitCode}: ${tail(proc.stderr)}`
-  return { ok, rawText, text: cleanMessage(rawText), error, exitCode: proc.exitCode, wallMs: proc.wallMs, usage, argv }
+  const message = spec.files ? lastTaggedBlock(rawText, "commit_message") : rawText
+  return {
+    ok, rawText, text: cleanMessage(message), error, exitCode: proc.exitCode, wallMs: proc.wallMs, usage, argv,
+    toolCalls: spec.files ? toolCalls : undefined,
+  }
 }
 
 function workDir(spec: RunSpec, scratch?: string): string {

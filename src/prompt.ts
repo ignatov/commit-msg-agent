@@ -3,6 +3,8 @@ import type { ChangeContext } from "./git"
 
 /** The scripts in `scripts/` read the same file. */
 export const SYSTEM_PROMPT = readFileSync(new URL("../prompts/system.md", import.meta.url), "utf8").trim()
+/** The files mode adds these rules: the prompt has no diff, and the agent reads the changes with its tools. */
+export const FILES_RULES = readFileSync(new URL("../prompts/files.md", import.meta.url), "utf8").trim()
 
 export interface DiffLimits {
   /** The maximum size of the diff text in the prompt. */
@@ -23,15 +25,30 @@ export interface Prompt {
 
 export function buildPrompt(ctx: ChangeContext, limits: DiffLimits = DEFAULT_LIMITS): Prompt {
   const diff = truncateDiff(ctx.diff, limits)
+  const parts = contextParts(ctx)
+  const note = diff.truncated ? ` note="Parts of the diff are omitted to fit the size limit. The changed_files list is complete."` : ""
+  parts.push(`<diff${note}>\n${diff.text}\n</diff>`)
+  return { system: SYSTEM_PROMPT, user: parts.join("\n\n"), diffChars: ctx.diff.length, truncated: diff.truncated }
+}
+
+/**
+ * The files mode: the prompt lists the changed files, and the agent runs `diffCommand` and reads what it needs.
+ * The agent must work in the repository and have read-only tools, see `RunSpec.files`.
+ */
+export function buildFilesPrompt(ctx: ChangeContext, diffCommand: string): Prompt {
+  const parts = contextParts(ctx)
+  parts.push(`The diff is not in this message. Run \`${diffCommand}\` to see it, then write the commit message between <commit_message> tags.`)
+  return { system: `${SYSTEM_PROMPT}\n\n${FILES_RULES}`, user: parts.join("\n\n"), diffChars: ctx.diff.length, truncated: false }
+}
+
+function contextParts(ctx: ChangeContext): string[] {
   const parts: string[] = []
   if (ctx.recentSubjects.length > 0) {
     parts.push(`<recent_commit_messages>\n${ctx.recentSubjects.join("\n")}\n</recent_commit_messages>`)
   }
   if (ctx.branch) parts.push(`<branch>${ctx.branch}</branch>`)
   parts.push(`<changed_files>\n${ctx.stat}\n</changed_files>`)
-  const note = diff.truncated ? ` note="Parts of the diff are omitted to fit the size limit. The changed_files list is complete."` : ""
-  parts.push(`<diff${note}>\n${diff.text}\n</diff>`)
-  return { system: SYSTEM_PROMPT, user: parts.join("\n\n"), diffChars: ctx.diff.length, truncated: diff.truncated }
+  return parts
 }
 
 const NOISY_FILE = /(^|\/)([^/]*\.lock|[^/]*-lock\.(json|yaml)|[^/]*\.min\.(js|css)|[^/]*\.map)$/

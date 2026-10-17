@@ -150,6 +150,31 @@
     "sha": "a10c8127f7"
   },
   {
+    "id": "codex-31",
+    "repo": "~/src/codex",
+    "sha": "4f6d43c267"
+  },
+  {
+    "id": "codex-32",
+    "repo": "~/src/codex",
+    "sha": "68301fa45f"
+  },
+  {
+    "id": "codex-33",
+    "repo": "~/src/codex",
+    "sha": "41ca88e95c"
+  },
+  {
+    "id": "codex-34",
+    "repo": "~/src/codex",
+    "sha": "8a40095ea3"
+  },
+  {
+    "id": "codex-35",
+    "repo": "~/src/codex",
+    "sha": "cbb7e82a8b"
+  },
+  {
     "id": "intellij-community-1",
     "repo": "~/src/intellij-community",
     "subject": "misc codeowners: give IJPL the community productLayout package"
@@ -298,5 +323,30 @@
     "id": "intellij-community-30",
     "repo": "~/src/intellij-community",
     "subject": "[editor] IJPL-254637 naive eg-walker, move offset, part51"
+  },
+  {
+    "id": "intellij-community-31",
+    "repo": "~/src/intellij-community",
+    "subject": "PY-89567 [debugpy] move launch work off the EDT"
+  },
+  {
+    "id": "intellij-community-32",
+    "repo": "~/src/intellij-community",
+    "subject": "IJPL-250364 [editor-tabs]: Add editor tabs grouping"
+  },
+  {
+    "id": "intellij-community-33",
+    "repo": "~/src/intellij-community",
+    "subject": "KTIJ-39601 [kotlin] Make K2 specific test data files as default for quick fixes"
+  },
+  {
+    "id": "intellij-community-34",
+    "repo": "~/src/intellij-community",
+    "subject": "LSP-1937 [protocol] speed up wire codec: compact JSON, streaming kotlinx decode, explicit nulls"
+  },
+  {
+    "id": "intellij-community-35",
+    "repo": "~/src/intellij-community",
+    "subject": "IJAI-955 the dev-dist generator lives in community"
   }
 ]
