@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { runAcp } from "./acp"
 import { cleanMessage, joinStructured, lastFencedBlock, lastTaggedBlock, MESSAGE_SCHEMA, type StructuredMessage } from "./clean"
 
-export type AgentName = "claude" | "codex" | "junie" | "codex-acp" | "claude-acp" | "junie-acp"
+export type AgentName = "claude" | "codex" | "junie" | "pi" | "codex-acp" | "claude-acp" | "junie-acp"
 
 /**
  * - `naive`: the default flags. The agent loads its full system prompt, tools, hooks, MCP servers, and memory files.
@@ -53,13 +53,13 @@ export interface RunResult {
   error?: string
   exitCode: number | null
   wallMs: number
-  /** Only Claude Code reports a price. Codex reports tokens only. */
+  /** Claude Code reports a price, and pi computes one from its model catalog. Codex reports tokens only. */
   costUsd?: number
   usage: Usage
   argv: string[]
   /** ACP only: spawn, `initialize`, and `session/new`. */
   startMs?: number
-  /** Junie only: the number of model calls in one task. */
+  /** Junie and pi only: the number of model calls in one task. */
   llmCalls?: number
   /** The files mode only: the commands and the tool calls of the agent, in order. */
   toolCalls?: string[]
@@ -78,6 +78,7 @@ export async function runAgent(spec: RunSpec, system: string, user: string): Pro
     case "claude": return runClaude(spec, system, user)
     case "codex": return runCodex(spec, system, user)
     case "junie": return runJunie(spec, system, user)
+    case "pi": return runPi(spec, system, user)
     default: return runAcpAgent(spec, system, user)
   }
 }
@@ -323,6 +324,71 @@ async function runCodex(spec: RunSpec, system: string, user: string): Promise<Ru
   return {
     ok, rawText, text: cleanMessage(message), error, exitCode: proc.exitCode, wallMs: proc.wallMs, usage, argv,
     toolCalls: spec.files ? toolCalls : undefined,
+  }
+}
+
+/**
+ * pi loads these parts of its setup at every start, and each switch skips one: the tools, the extensions, the skills,
+ * the prompt templates, the themes, and the AGENTS.md and CLAUDE.md files. `--offline` skips the install of missing pi packages.
+ * With `--system-prompt` pi adds one line to our prompt: the working directory.
+ */
+const PI_LEAN = ["--no-tools", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files", "--offline"]
+
+/** The config directory of pi instead of ~/.pi/agent: the providers in models.json and the logins in auth.json. */
+const PI_USER_ENV = ["PI_CODING_AGENT_DIR"]
+
+async function runPi(spec: RunSpec, system: string, user: string): Promise<RunResult> {
+  // Without `--no-session` pi saves every message as a session in its config directory.
+  const argv = ["pi", "-p", "--mode", "json", "--no-session"]
+  // The model is provider/id, for example anthropic/claude-haiku-4-5. Without it pi takes the default model of the user.
+  if (spec.model) argv.push("--model", spec.model)
+  // Without it pi thinks at `medium`: Haiku 4.5 with a budget of 8192 tokens.
+  if (spec.effort) argv.push("--thinking", spec.effort)
+  let stdin = user
+  if (spec.variant === "naive") {
+    // No bash and no write tools, as in the naive Claude Code call. The `read` tool stays.
+    argv.push("--exclude-tools", "bash,edit,write")
+    stdin = `${system}\n\n${user}`
+  }
+  else argv.push("--system-prompt", system, ...PI_LEAN)
+  argv.push(...(spec.extraArgs ?? []))
+
+  const userEnv = Object.fromEntries(PI_USER_ENV.filter(key => process.env[key]).map(key => [key, process.env[key]!]))
+  const proc = await spawn(argv, stdin, workDir(spec), spec.timeoutMs, { ...userEnv, ...spec.extraEnv })
+  const usage = { ...ZERO_USAGE }
+  let costUsd = 0
+  let calls = 0
+  let last: any
+  for (const line of proc.stdout.split("\n")) {
+    if (!line.startsWith("{")) continue
+    let event: any
+    try {
+      event = JSON.parse(line)
+    }
+    catch {
+      // A process killed at the timeout leaves a cut line.
+      continue
+    }
+    if (event.type !== "message_end" || event.message?.role !== "assistant") continue
+    // Every assistant message is one model call. pi counts the cached and the cache-write tokens apart from `input`, also for OpenAI.
+    last = event.message
+    calls++
+    const u = last.usage ?? {}
+    usage.input += (u.input ?? 0) + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0)
+    usage.cachedInput += u.cacheRead ?? 0
+    usage.cacheWrite += u.cacheWrite ?? 0
+    usage.output += u.output ?? 0
+    usage.reasoning += u.reasoning ?? 0
+    costUsd += u.cost?.total ?? 0
+  }
+  const rawText = (last?.content ?? []).filter((it: any) => it.type === "text").map((it: any) => it.text).join("")
+  // The JSON mode exits with 0 also when the request fails. The error is in the last message.
+  let error = ["error", "aborted"].includes(last?.stopReason) ? String(last.errorMessage ?? last.stopReason) : undefined
+  const ok = proc.exitCode === 0 && !error && rawText.trim() !== ""
+  if (!ok) error ??= `exit ${proc.exitCode}: ${tail(proc.stderr || proc.stdout)}`
+  return {
+    ok, rawText, text: cleanMessage(rawText), error, exitCode: proc.exitCode, wallMs: proc.wallMs, usage, argv,
+    costUsd: calls ? costUsd : undefined, llmCalls: calls,
   }
 }
 

@@ -2,6 +2,7 @@
 //
 //   bun gen.ts                   # the staged changes of the current directory, Claude Code with Haiku
 //   bun gen.ts --agent codex     # Codex with gpt-5.6-luna
+//   bun gen.ts --agent pi --model anthropic/claude-haiku-4-5   # pi; without --model, the default model of pi
 //   bun gen.ts --all             # all tracked changes against HEAD
 //   bun gen.ts --files           # no diff in the prompt: the agent reads the changes in the repository itself
 //   bun gen.ts --commit <sha>    # an existing commit, for experiments
@@ -47,10 +48,12 @@ if (args["dry-run"]) {
 
 const res = await runAgent({
   agent,
-  model: args.model ?? (agent === "claude" ? "claude-haiku-5-5" : "gpt-5.6-luna"),
+  // pi has no provider of its own: it takes the default model from its settings.
+  model: args.model ?? (agent === "claude" ? "claude-haiku-5-5" : agent === "pi" ? "" : "gpt-5.6-luna"),
   variant: (args.variant ?? (agent === "claude" ? "safe" : "lean")) as Variant,
   // Haiku 5.5 thinks less at the low effort. Claude Code 2.1.291 cannot turn its thinking off: it does not know the model.
-  effort: args.effort ?? "low",
+  // pi can, and Haiku 4.5 thinks there at every other level.
+  effort: args.effort ?? (agent === "pi" ? "off" : "low"),
   schema: args.schema,
   files: args.files,
   cwd: args.files ? args.repo : undefined,

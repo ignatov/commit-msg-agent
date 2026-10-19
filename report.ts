@@ -5,10 +5,13 @@ import { $ } from "bun"
 import { readdirSync, readFileSync, writeFileSync } from "node:fs"
 
 const inputs = process.argv.length > 2 ? process.argv.slice(2) :
-  readdirSync("results").filter(it => /^bench-agents.*\.jsonl$/.test(it)).map(it => `results/${it}`)
+  readdirSync("results").filter(it => /^bench-agents.*\.jsonl$/.test(it) && !it.endsWith(".judge.jsonl")).map(it => `results/${it}`)
 const rows: any[] = inputs.flatMap(file => readFileSync(file, "utf8").split("\n").filter(Boolean).map(it => JSON.parse(it)))
-// The date of the commit with the data: a rebuild of the report on another day keeps it. New data has no commit yet.
-const date = (await $`git log -1 --format=%cs -- ${inputs}`.nothrow().text()).trim() || new Date().toISOString().slice(0, 10)
+// The date of the commit with each data file: a rebuild of the report on another day keeps it. New data has no commit yet.
+const today = new Date().toISOString().slice(0, 10)
+const dates = [...new Set(await Promise.all(inputs.map(async file => (await $`git log -1 --format=%cs -- ${file}`.nothrow().text()).trim() || today)))].sort()
+const date = dates.length > 1 ? `${dates.slice(0, -1).join(", ")} and ${dates.at(-1)}` : dates[0]
+const VERSIONS = "Claude Code 2.1.291, codex-cli 0.154.0, codex-acp 2.2.2, claude-agent-acp 0.89.1, Junie 26.10.5, pi 0.84.2, macOS"
 
 interface AgentInfo {
   config: string
@@ -23,6 +26,12 @@ interface AgentInfo {
 
 const CLAUDE = "claude:haiku:safe"
 const CODEX = "codex:gpt-5.6-luna:lean:low"
+// Claude Code 2.1.291 does not know the price of Haiku 5.5. pi takes the price from its model catalog.
+const CLAUDE_HAIKU_55 = "claude:claude-haiku-5-5:safe:low"
+const PI_HAIKU = "pi:anthropic/claude-haiku-4-5:lean:off"
+const PI_HAIKU_55 = "pi:anthropic/claude-haiku-5-5:lean:low"
+const PI_LUNA = "pi:openai/gpt-5.6-luna:lean:low"
+const PI_NAIVE_HAIKU = "pi:anthropic/claude-haiku-4-5:naive"
 const x = (a: number | undefined, b: number | undefined) => (a && b ? `${(a / b).toFixed(1)}×` : "?")
 
 const AGENTS: AgentInfo[] = [
@@ -32,7 +41,7 @@ const AGENTS: AgentInfo[] = [
     notes: () => ["The cheapest per message.", "Needs four switches against user settings, see the README."],
   },
   {
-    config: "claude:claude-haiku-5-5:safe:low", agent: "Claude Code", model: "Haiku 5.5", how: "<code>claude -p</code>",
+    config: CLAUDE_HAIKU_55, agent: "Claude Code", model: "Haiku 5.5", how: "<code>claude -p</code>",
     verdict: "good", verdictText: "Ready",
     notes: () => ["Explains why a change was made more often than the other models.", "Claude Code 2.1.291 does not know this model: the reported cost is not reliable."],
   },
@@ -40,6 +49,25 @@ const AGENTS: AgentInfo[] = [
     config: CODEX, agent: "Codex", model: "GPT-5.6 Luna", how: "<code>codex exec</code>",
     verdict: "good", verdictText: "Ready",
     notes: () => ["Short and exact messages, rarely a body.", "The CLI reports tokens, not a price."],
+  },
+  {
+    config: PI_HAIKU, agent: "pi", model: "Haiku 4.5", how: "<code>pi -p</code>",
+    verdict: "good", verdictText: "Ready",
+    notes: () => ["Ten switches, all on the command line: our system prompt, no tools, no extensions, skills, or AGENTS.md files. pi adds only the working directory.",
+      `$${stats(PI_HAIKU).cost?.toFixed(4)} per message, against $${stats(CLAUDE).cost?.toFixed(4)} for <code>claude -p</code>: pi writes the 5-minute prompt cache ` +
+      "at 1.25 times the input price. Claude Code wrote the 1-hour cache at 2 times: the user settings set <code>ENABLE_PROMPT_CACHING_1H</code>."],
+  },
+  {
+    config: PI_HAIKU_55, agent: "pi", model: "Haiku 5.5", how: "<code>pi -p</code>",
+    verdict: "good", verdictText: "Ready",
+    notes: () => ["pi 0.84.2 knows this model only after <code>pi update --models</code>. Without it pi prices the model as another one, 50 times higher.",
+      `The longest messages: a body in ${bodies(PI_HAIKU_55)} of ${stats(PI_HAIKU_55).ok}, against ${bodies(CLAUDE_HAIKU_55)} for <code>claude -p</code> with the same model and prompt.`],
+  },
+  {
+    config: PI_LUNA, agent: "pi", model: "GPT-5.6 Luna", how: "<code>pi -p</code>",
+    verdict: "good", verdictText: "Ready",
+    notes: () => [`${x(stats(PI_LUNA).input, stats(CODEX).input)} the input tokens of <code>codex exec</code>, which adds its own context.`,
+      "pi computes the price from its model catalog, also for the models that the CLIs do not price."],
   },
   {
     config: "codex-acp:gpt-5.6-luna[low]", agent: "Codex ACP", model: "GPT-5.6 Luna", how: "ACP (<code>codex-acp</code>)",
@@ -53,6 +81,14 @@ const AGENTS: AgentInfo[] = [
     notes: () => ["ACP takes none of the <code>claude -p</code> switches: the full Claude Code prompt, tools, hooks, and user settings come with every call.",
       `${x(stats("claude-acp:haiku").input, stats(CLAUDE).input)} the input tokens and ${x(stats("claude-acp:haiku").p50, stats(CLAUDE).p50)} the time of <code>claude -p</code>.`,
       "Without a model switch the session uses the default model of the user, Opus in this test: $0.15 for one word."],
+  },
+  {
+    config: PI_NAIVE_HAIKU, agent: "pi, no switches", model: "Haiku 4.5", how: "<code>pi -p</code>",
+    verdict: "ok", verdictText: "Works, slow",
+    notes: () => [`pi thinks at <code>medium</code> by default, Haiku 4.5 with a budget of 8192 tokens: ${Math.round(stats(PI_NAIVE_HAIKU).reasoning ?? 0)} thinking tokens ` +
+      `per message, ${x(stats(PI_NAIVE_HAIKU).p50, stats(PI_HAIKU).p50)} the time of the call with the switches.`,
+      "The pi system prompt of 3.5k characters: its tools, its docs, and the skills of <code>~/.agents/skills</code>. The instructions go first in the prompt.",
+      "The benchmark left only the <code>read</code> tool, as for the naive Claude Code call."],
   },
   {
     config: "junie:junie-lite", agent: "Junie", model: "junie-lite", how: "<code>junie --task</code>",
@@ -75,6 +111,7 @@ const AGENTS: AgentInfo[] = [
 const esc = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 const seconds = (ms: number | undefined) => (ms === undefined ? "–" : `${(ms / 1000).toFixed(1)} s`)
 const pct = (values: number[], p: number) => values[Math.min(values.length - 1, Math.floor(values.length * p))]
+const bodies = (config: string) => rows.filter(it => it.config === config && it.ok && it.text.trim().includes("\n\n")).length
 
 function stats(config: string) {
   const all = rows.filter(it => it.config === config)
@@ -86,7 +123,7 @@ function stats(config: string) {
   const costs = good.filter(it => it.costUsd !== undefined && it.costUsd !== null)
   return {
     runs: all.length, ok: ok.length, measured: good.length, p50: pct(ms, 0.5), p90: pct(ms, 0.9),
-    input: mean(it => it.usage.input), output: mean(it => it.usage.output),
+    input: mean(it => it.usage.input), output: mean(it => it.usage.output), reasoning: mean(it => it.usage.reasoning),
     cost: costs.length ? costs.reduce((sum, row) => sum + row.costUsd, 0) / costs.length : undefined,
     calls: mean(it => it.llmCalls ?? 1),
     firstError: all.find(it => !it.ok)?.error,
@@ -99,7 +136,7 @@ const kb = (chars: number) => `${(chars / 1000).toFixed(1)} KB`
 const runsPerTask = Math.max(...rows.map(it => it.run)) + 1
 const summaryRows = AGENTS.map(info => {
   const s = stats(info.config)
-  const cost = info.config.includes("haiku-5-5") ? "unreliable" : s.cost === undefined ? "not reported" : `$${s.cost.toFixed(4)}`
+  const cost = info.config === CLAUDE_HAIKU_55 ? "unreliable" : s.cost === undefined ? "not reported" : `$${s.cost.toFixed(4)}`
   return `<tr>
     <td><b>${info.agent}</b><div class="sub">${info.how}</div></td>
     <td>${esc(info.model)}</td>
@@ -164,12 +201,13 @@ const html = `<!doctype html>
   code { font-size: 12px; }
 </style></head><body>
 <h1>Commit message generation through a terminal agent</h1>
-<p class="lead">${date}. ${commits.length} real commits of <a href="https://github.com/openai/codex">openai/codex</a> and <a href="https://github.com/JetBrains/intellij-community">JetBrains/intellij-community</a>, diff from ${kb(Math.min(...diffSizes))} to ${kb(Math.max(...diffSizes))}, ${runsPerTask} runs per commit and agent. Cheap models only. Claude Code 2.1.291, codex-cli 0.154.0, codex-acp 2.2.2, claude-agent-acp 0.89.1, Junie 26.10.5, macOS.</p>
+<p class="lead">${date}. ${commits.length} real commits of <a href="https://github.com/openai/codex">openai/codex</a> and <a href="https://github.com/JetBrains/intellij-community">JetBrains/intellij-community</a>, diff from ${kb(Math.min(...diffSizes))} to ${kb(Math.max(...diffSizes))}, ${runsPerTask} runs per commit and agent. Cheap models only. ${VERSIONS}.</p>
 
 <h2>Verdict</h2>
 <div class="cards">
-  <div class="card"><b>Use the CLI mode, not ACP</b><code>claude -p</code> and <code>codex exec</code> give the message in 2–3 seconds for less than 2 cents. The IDE collects the diff and gives it to the agent; the agent only writes text.</div>
+  <div class="card"><b>Use the CLI mode, not ACP</b><code>claude -p</code>, <code>codex exec</code>, and <code>pi -p</code> give the message in 2–3 seconds for less than 2 cents. The IDE collects the diff and gives it to the agent; the agent only writes text.</div>
   <div class="card"><b>Claude Code and Codex are ready</b>All runs succeeded and the output was clean text. Haiku 4.5 is the fastest; Haiku 5.5 writes the best explanations; Luna writes short and exact messages.</div>
+  <div class="card"><b>pi is ready too</b>With ten switches <code>pi -p</code> sends only our system prompt, the working directory, and the prompt: ${seconds(stats(PI_LUNA).p50)} per message with Luna, ${seconds(stats(PI_HAIKU).p50)} with Haiku 4.5. pi has no model of its own: it calls the provider of the user with the user's key.</div>
   <div class="card"><b>Junie is not suitable today</b>Its CLI returns a task report instead of the message and makes several model calls. Its ACP mode needs the IDE for authorization.</div>
   <div class="card"><b>Do not trust issue ids from the model</b>${allIds.wrong} of the ${allIds.written} ids that the models wrote were wrong. The IDE takes the id from the branch name only.</div>
 </div>
@@ -200,6 +238,7 @@ ${exampleRows}
   <li>Windows and Linux.</li>
   <li>A Claude subscription login; the tests used an API key helper.</li>
   <li>Junie with a JetBrains AI subscription, and Junie ACP inside the running IDE.</li>
+  <li>pi with a subscription login, with a local model, and in its RPC mode.</li>
 </ul>
 </body></html>
 `
@@ -217,13 +256,13 @@ function agentTable(): string {
   const out = ["| | Agent | Mode | Model | Success | Median | p90 | Input tokens | Cost per message | Wrong issue ids |", "|---|---|---|---|---:|---:|---:|---:|---:|---:|"]
   for (const info of AGENTS) {
     const s = stats(info.config)
-    const cost = info.config.includes("haiku-5-5") ? "n/a¹" : s.cost === undefined ? "n/a²" : `$${s.cost.toFixed(4)}`
+    const cost = info.config === CLAUDE_HAIKU_55 ? "n/a¹" : s.cost === undefined ? "n/a²" : `$${s.cost.toFixed(4)}`
     out.push(`| ${STATUS[info.verdict]} | **${info.agent}** | ${md(info.how)} | ${info.model} | ${s.ok}/${s.runs} | ` +
       `${s.measured ? seconds(s.p50) : "–"} | ${s.measured ? seconds(s.p90) : "–"} | ` +
       `${s.input === undefined ? "–" : `${(s.input / 1000).toFixed(1)}k`} | ${s.measured ? cost : "–"} | ` +
       `${s.ok ? `${issueIds(info.config).wrong} of ${issueIds(info.config).written}` : "–"} |`)
   }
-  out.push("", "¹ Claude Code 2.1.291 does not know the price of Haiku 5.5. ² The CLI reports tokens, not a price. " +
+  out.push("", "¹ Claude Code 2.1.291 does not know the price of Haiku 5.5. ² The CLI reports tokens, not a price. pi computes the cost from its model catalog. " +
     "Wrong issue ids: the ids that the model wrote into the summary line and the real message does not have. The IDE removes all of them, see [Issue ids](README.md#issue-ids).")
   return out.join("\n")
 }
@@ -266,8 +305,9 @@ ${summary}
 
 ## Verdict
 
-- ✅ **Use the CLI mode.** \`claude -p\` and \`codex exec\` return the message in 2–3 s. The IDE collects the diff; the agent only writes text.
+- ✅ **Use the CLI mode.** \`claude -p\`, \`codex exec\`, and \`pi -p\` return the message in 2–3 s. The IDE collects the diff; the agent only writes text.
 - ✅ **Claude Code and Codex are ready.** Every run returned clean text: no quotes, no fences, no preamble.
+- ✅ **pi is ready too.** With ten switches \`pi -p\` sends only our system prompt, the working directory, and the prompt: ${seconds(stats(PI_LUNA).p50)} per message with Luna, ${seconds(stats(PI_HAIKU).p50)} with Haiku 4.5. It calls the provider of the user with the user's key. Without the switches Haiku 4.5 thinks, and a message takes ${seconds(stats(PI_NAIVE_HAIKU).p50)}.
 - 🟡 **ACP works, but costs more.** ACP has no system prompt and no switches to cut the context, so every call carries the full agent setup.
 - ❌ **Junie is not suitable today.** Its CLI returns a task report instead of the message. Its ACP mode needs a JetBrains IDE for the login.
 - ⚠️ **Do not trust issue ids from the model.** ${allIds.wrong} of the ${allIds.written} ids that the models wrote were wrong: an id of an unrelated commit, or an invented one. Keep only the ids from the branch name.
@@ -291,7 +331,7 @@ ${examples(AGENTS, commits)}
 
 ## Versions
 
-Claude Code 2.1.291, codex-cli 0.154.0, codex-acp 2.2.2, claude-agent-acp 0.89.1, Junie 26.10.5, macOS. Raw data: ${inputs.map(it => `[\`${it}\`](${it})`).join(", ")}.
+${VERSIONS}. Raw data: ${inputs.map(it => `[\`${it}\`](${it})`).join(", ")}.
 `
 writeFileSync("REPORT.md", report)
 

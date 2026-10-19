@@ -4,6 +4,7 @@
 //   bun bench.ts --probe --repeat 3 --configs claude:haiku:naive,claude:haiku:safe
 //
 // A config is agent:model:variant[:effort][+schema][+files], or agent:model for junie and the ACP agents.
+// The model of pi holds its provider: pi:anthropic/claude-haiku-4-5:lean:off.
 // +files gives the agent the list of the changed files instead of the diff: it reads the changes in a clone of the repository.
 // The tasks come from tasks.local.json when it exists, else from tasks.json.
 import { $ } from "bun"
